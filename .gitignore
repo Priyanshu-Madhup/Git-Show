@@ -1,0 +1,14 @@
+# Safety net for secrets at any level, in case one ever lands outside
+# backend/ or frontend/ (which already ignore their own known secret files).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea

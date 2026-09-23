@@ -1,0 +1,59 @@
+:root {
+  --color-bg: #050706;
+  --color-bg-raised: #0a0f0c;
+  --color-hairline: rgba(120, 220, 170, 0.22);
+  --color-green: #34e58f;
+  --color-green-bright: #8bffce;
+  --color-green-dim: rgba(52, 229, 143, 0.14);
+  --color-white: #f4f7f5;
+  --color-muted: #93a39a;
+
+  --font-display: 'Fraunces Variable', Georgia, serif;
+  --font-sans: 'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  color-scheme: dark;
+  color: var(--color-white);
+  background: var(--color-bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--color-green);
+  color: #04150c;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-green-bright);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
