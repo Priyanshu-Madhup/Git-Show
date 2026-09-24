@@ -53,6 +53,7 @@ class RunContext:
     user_id: int | None
     token: str | None
     session_hash: str | None
+    user_login: str | None
     repo: str | None
     user_request: str
     state: dict

@@ -80,6 +80,7 @@ def _interpret(ctx) -> dict:
         raw = llm.complete_json(
             [
                 {"role": "system", "content": INTERPRET_PROMPT},
+                *runtime.who_message(ctx),
                 *ctx.context_messages,
                 {"role": "user", "content": ctx.user_request},
             ],

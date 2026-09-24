@@ -29,9 +29,11 @@ SYSTEM_PROMPT = (
     "- To change part of an existing file, use edit_file with old_text copied verbatim from the "
     "evidence (exact indentation and whitespace), including enough surrounding lines to be "
     "unique. Use create_or_update_file only for new files or full rewrites you can see whole.\n"
-    "- Never guess names the user has to choose (a new branch name, file path, commit message, "
-    "PR or issue title, release tag, repo name). If the instruction and conversation don't give "
-    "one, don't call a tool: reply with a short explanation of exactly what's missing.\n"
+    "- Only a few names are the user's to choose: a new branch name, a new repository name, a "
+    "release tag. If one of those is needed and not given, don't call a tool: say exactly what's "
+    "missing. Everything else you write yourself — commit messages, PR and issue titles and "
+    "text, and the content itself when the user asked you to improve or rewrite something "
+    "('make it look good'). Use the existing content as the starting point.\n"
     "- Obvious defaults are fine: the selected repo's owner/name, its default branch as a base.\n"
     "- Write clear, specific commit messages and PR/issue text.\n"
     "- If you call no tool, reply in plain text explaining why."
@@ -114,6 +116,25 @@ def describe(tool, arguments, preview) -> str:
     return f"I'd like to run **{tool}**. Review the details below and confirm to proceed."
 
 
+def _wrong_profile_target(ctx, arguments):
+    """A profile-README request must write to the user's profile repository,
+    never overwrite another repository's README (e.g. the one selected in the
+    picker). Returns an error for the model, or None."""
+    login = ctx.user_login
+    goal = f"{ctx.user_request} {ctx.state.get('goal', '')}".lower()
+    if not login or "profile" not in goal:
+        return None
+    owner, repo, path = arguments.get("owner"), arguments.get("repo"), (arguments.get("path") or "")
+    if not owner or not repo or path.lower().lstrip("/") != "readme.md":
+        return None
+    if f"{owner}/{repo}".lower() == f"{login}/{login}".lower():
+        return None
+    return (
+        f"This is about the user's GitHub profile, whose README is README.md in {login}/{login} — "
+        f"not {owner}/{repo}. Write the change there, and never overwrite {owner}/{repo}'s README."
+    )
+
+
 def _off_target_repo(ctx, arguments):
     """A write aimed at a repository other than the selected one is only
     allowed if the user named that repository themselves. Returns an error
@@ -124,8 +145,12 @@ def _off_target_repo(ctx, arguments):
     target = f"{owner}/{repo}".lower()
     if target == ctx.repo.lower():
         return None
-    request = ctx.user_request.lower()
+    request = f"{ctx.user_request} {ctx.state.get('goal', '')}".lower()
     if target in request or f"/{repo.lower()}" in request or f" {repo.lower()}" in f" {request}":
+        return None
+    # The user's own profile repository, when the goal is about their profile.
+    login = (ctx.user_login or "").lower()
+    if login and target == f"{login}/{login}" and ("profile" in request or "readme" in request):
         return None
     return (
         f"This change targets {owner}/{repo}, but the selected repository is {ctx.repo} and the "
@@ -170,7 +195,7 @@ def propose(ctx, *, instruction, context_messages, observations_text, evidence):
             last_error = f"{name} is not a write tool you can use."
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps({"error": last_error})})
             continue
-        wrong_repo = _off_target_repo(ctx, arguments)
+        wrong_repo = _wrong_profile_target(ctx, arguments) or _off_target_repo(ctx, arguments)
         if wrong_repo:
             last_error = wrong_repo
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps({"error": wrong_repo})})

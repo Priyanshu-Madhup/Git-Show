@@ -13,6 +13,7 @@ A Writer step pauses the run until the user confirms; resume() picks it up
 from there."""
 
 import json
+import re
 
 import llm
 import runtime
@@ -38,6 +39,16 @@ PLAN_PROMPT = (
     "Steps are plain-language instructions for those agents — never tool names or tool "
     "arguments.\n\n"
     "Rules:\n"
+    "- The reader and writer cannot talk to the user. Never plan a step to ask, prompt, or "
+    "wait for the user. If something truly only the user can decide is missing, set done=true "
+    "and ask in final_answer instead.\n"
+    "- When the user leaves the details to you ('make it look good', 'improve it', 'clean it "
+    "up', 'use the existing one and change it'), don't ask for content: have the reader read "
+    "what exists, then have the writer improve it with good judgment. The user reviews the "
+    "exact diff before anything is committed, so that is where they give feedback.\n"
+    "- The user's GitHub profile page is just README.md in the repository named after them "
+    "(planning input: profile_readme). Improving 'my profile' means reading and editing that "
+    "file — a normal edit the writer can make, never something you lack access to.\n"
     "- Do exactly what the user asked, nothing more. Never write code, create files, or make "
     "changes they didn't ask for.\n"
     "- Read requests in git/GitHub terms: 'create a branch legend' means a git branch named "
@@ -49,7 +60,9 @@ PLAN_PROMPT = (
     "commit message), so never add a separate 'commit' or 'push' step.\n"
     "- Give every step an 'expected' outcome: what its output should show if it went right. "
     "That is what its output will be checked against.\n"
-    "- Instructions must be self-contained (repo, file, function, branch, names, messages).\n"
+    "- Instructions must be self-contained: every reader and writer instruction names the exact "
+    "repository (owner/name) and file path it's about, plus any function, branch, names, or "
+    "messages. Never leave the repository implicit.\n"
     "- When revising, keep finished steps as done, keep ids stable, give new steps new ids, and "
     "don't repeat a step whose output you already have.\n"
     "- If the user cancelled a proposed change, don't propose it (or a variant) again.\n"
@@ -121,10 +134,24 @@ def format_observations(observations):
     return "\n\n".join(lines)
 
 
+ASKS_USER = re.compile(
+    r"\b(ask|prompt|request|wait for|waiting for|confirm with|check with)\b[^.]*\b(the )?user\b"
+    r"|\buser('s)? (response|reply|input|answer|details|preferences)\b",
+    re.IGNORECASE,
+)
+
+
 def _validate_plan(raw):
     steps = raw.get("steps")
     if not isinstance(steps, list):
         raise ValueError("steps must be a list")
+    for s in steps:
+        if isinstance(s, dict) and s.get("status", "pending") == "pending" and ASKS_USER.search(str(s.get("instruction", ""))):
+            raise ValueError(
+                "a step asks or waits for the user, but the reader and writer can't talk to the "
+                "user. Either do the work with good judgment (read what exists, then improve it), "
+                "or set done=true and ask the user in final_answer"
+            )
     for s in steps:
         if not isinstance(s, dict) or str(s.get("agent", "")).lower() not in AGENTS or not str(s.get("instruction", "")).strip():
             raise ValueError('every step needs "agent" ("reader" or "writer") and a plain-language "instruction"')
@@ -168,6 +195,8 @@ def make_plan(ctx, *, why=None, must_finish=None) -> dict:
         "goal": state.get("goal") or ctx.user_request,
         "user_request": ctx.user_request,
         "selected_repository": ctx.repo,
+        "signed_in_user": ctx.user_login,
+        "profile_readme": f"{ctx.user_login}/{ctx.user_login} README.md" if ctx.user_login else None,
         "current_plan": state.get("plan") and {k: state["plan"][k] for k in ("goal", "steps")},
     }
     parts = [
@@ -188,7 +217,21 @@ def make_plan(ctx, *, why=None, must_finish=None) -> dict:
         *ctx.repo_messages,
         {"role": "user", "content": "\n\n".join(parts)},
     ]
-    raw = llm.complete_json(messages, schema=PLAN_SCHEMA, validate=None if must_finish else _validate_plan)
+    ran = {o.get("plan_step_id") for o in state.get("observations", [])}
+
+    def validate(value):
+        _validate_plan(value)
+        phantom = [
+            s for s in value.get("steps", [])
+            if isinstance(s, dict) and s.get("status") == "done" and s.get("id") not in ran
+        ]
+        if phantom:
+            raise ValueError(
+                f"step {phantom[0].get('id')} is marked done but never ran. Mark steps done only "
+                "after their output came back; leave new steps pending"
+            )
+
+    raw = llm.complete_json(messages, schema=PLAN_SCHEMA, validate=None if must_finish else validate)
     plan = _normalize_plan(raw, state.get("plan"))
     if must_finish:
         plan["done"] = True
@@ -231,6 +274,8 @@ def _enforce_statuses(state, plan):
     for step in plan["steps"]:
         o = latest.get(step["id"])
         if not o:
+            if step["status"] == "done":
+                step["status"] = "pending"  # nothing ran, so it can't be done
             continue
         if o["status"] == "cancelled_by_user":
             step["status"] = "skipped"

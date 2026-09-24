@@ -62,6 +62,7 @@ def new_context(*, message, chat_id, repo, session) -> RunContext:
         user_id=session["user_id"] if session else None,
         token=session["access_token"] if session else None,
         session_hash=session["token_hash"] if session else None,
+        user_login=(session.get("user") or {}).get("login") if session else None,
         repo=repo,
         user_request=message,
         state={"observations": [], "evidence": [], "tool_calls_used": 0, "budget_limit": RUN_TOOL_BUDGET},
@@ -77,6 +78,7 @@ def restore_context(run, session) -> RunContext:
         user_id=session["user_id"],
         token=session["access_token"],
         session_hash=session["token_hash"],
+        user_login=(session.get("user") or {}).get("login"),
         repo=run["repo"],
         user_request=run["user_request"],
         state=run["state"] or {},
@@ -95,19 +97,42 @@ def load_context(ctx):
     owner, name = ctx.owner_repo
     if ctx.token and owner:
         overview = repo_index.overview(ctx.token, owner, name)
-    ctx.repo_messages = repo_context_message(ctx, overview)
+    ctx.repo_messages = who_message(ctx) + repo_context_message(ctx, overview)
     return {**context, "overview": overview}
+
+
+def who_message(ctx):
+    """Who is signed in, and where their GitHub profile README lives — so
+    "my profile" or "my README" never needs a question back."""
+    if not ctx.user_login:
+        return []
+    login = ctx.user_login
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"The signed-in GitHub user is {login}. Their GitHub profile README (the page shown "
+                f"on github.com/{login}) is README.md in the repository {login}/{login}. Requests "
+                "about 'my profile', 'my profile README', or 'my GitHub page' mean that file, not "
+                "the selected repository."
+            ),
+        }
+    ]
 
 
 def scoped(ctx, instruction):
     """Stamp the selected repository onto an agent instruction, so agents act
     on it instead of guessing (e.g. searching the user's other repos)."""
-    if not ctx.repo:
-        return instruction
-    return (
-        f"{instruction}\n\n[Repository: {ctx.repo}. Use it as owner/repo unless the instruction "
-        "explicitly names a different repository.]"
-    )
+    notes = []
+    if ctx.repo:
+        notes.append(
+            f"The repository selected in the picker is {ctx.repo}; use it only if the instruction "
+            "doesn't name a repository."
+        )
+    if ctx.user_login:
+        login = ctx.user_login
+        notes.append(f"Anything about the user's GitHub profile means README.md in {login}/{login}.")
+    return f"{instruction}\n\n[{' '.join(notes)}]" if notes else instruction
 
 
 # --- events ----------------------------------------------------------------------
