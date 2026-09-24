@@ -114,6 +114,44 @@ Other frontend scripts:
 - `npm run preview` — preview the production build
 - `npm run lint` — run oxlint
 
+## Deploying
+
+Local development needs none of this — every setting below is optional and defaults to the local setup.
+
+### 1. GitHub App settings (github.com → Settings → Developer settings → GitHub Apps → your app)
+
+- **Callback URL**: add `https://<your-domain>/api/auth/github/callback` (keep the localhost one too; GitHub Apps accept several).
+- **Request user authorization (OAuth) during installation**: on — installing then signs the user in, in one step.
+- **Where can this GitHub App be installed?** → *Any account*, so other people can install it.
+- **Permissions**: whatever Git Show should be able to do (e.g. Contents, Pull requests, Issues: read & write; Metadata: read).
+
+Signing in is not the same as installing: a user's token only reaches repositories where the app is **installed**. When a signed-in user has no accessible repositories, Git Show shows an **Install Git Show on your repositories** button (and a "Manage repository access" link otherwise), which goes to `/api/auth/github/install`. Both need `GITHUB_APP_SLUG`.
+
+### 2. One origin, one process (recommended)
+
+Build the frontend and let FastAPI serve it, so the browser, API, and session cookie share one origin:
+
+```bash
+cd frontend && npm install && npm run build      # -> frontend/dist
+cd ../backend && pip install -r requirements.txt
+SERVE_FRONTEND=1 uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Environment on the host (in addition to the ones in `.env.example`):
+
+| Variable | Value |
+|---|---|
+| `FRONTEND_URL` | `https://<your-domain>` (https also turns on Secure cookies) |
+| `GITHUB_CALLBACK_URL` | `https://<your-domain>/api/auth/github/callback` |
+| `GITHUB_APP_SLUG` | the app's URL name, from `github.com/apps/<slug>` |
+| `SERVE_FRONTEND` | `1` |
+
+If the frontend is hosted separately instead, point it at the API through a rewrite of `/api/*` (keeping one origin), or set `CORS_ORIGINS` to the frontend's origin — though cross-site cookies are more fragile than one origin.
+
+### 3. Where to host
+
+Use a long-running server (Railway, Render, Fly.io, a VM): agent runs stream for up to a minute and database writes happen on a background thread, which serverless functions would time out or kill. Put it in the same region as the Supabase project — every database round trip crosses that distance. Run `python db/migrate.py` once against the production database before first start.
+
 ## API reference (backend)
 
 | Method & path | Purpose |

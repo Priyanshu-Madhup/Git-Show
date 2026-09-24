@@ -4,6 +4,7 @@ hand every request to the orchestrator (see orchestrator.py)."""
 import os
 import secrets
 import uuid
+from pathlib import Path
 from urllib.parse import urlencode
 
 import requests
@@ -13,7 +14,8 @@ load_dotenv()
 
 from fastapi import Cookie, FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 import db  # noqa: E402
@@ -28,17 +30,54 @@ GITHUB_CALLBACK_URL = os.getenv(
 )
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
+# Everything below is optional and defaults to the local dev setup (Vite on
+# :5173 proxying /api to this server), so a local run needs none of it.
+
+# The GitHub App's URL name (github.com/apps/<slug>). Enables the "Install
+# Git Show on your repositories" link; without it the link is hidden.
+GITHUB_APP_SLUG = os.getenv("GITHUB_APP_SLUG", "").strip()
+
+# Origins allowed to call the API from a browser, comma-separated. Only
+# matters if the frontend is served from a different origin than the API.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+    if o.strip()
+]
+
+# Cookies must be Secure over HTTPS; that follows FRONTEND_URL unless set.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", str(FRONTEND_URL.startswith("https://"))).lower() in ("1", "true", "yes")
+
+# Set SERVE_FRONTEND=1 to have this server also serve the built frontend
+# (frontend/dist, from `npm run build`), so a deployment is one origin and
+# one process. Off by default: locally, Vite serves the frontend.
+SERVE_FRONTEND = os.getenv("SERVE_FRONTEND", "").lower() in ("1", "true", "yes")
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
+
 NDJSON = "application/x-ndjson"
 
 app = FastAPI(title="Git Show API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _set_cookie(response, name, value, max_age):
+    response.set_cookie(name, value, httponly=True, samesite="lax", secure=COOKIE_SECURE, max_age=max_age)
+
+
+def _begin_github_redirect(url, params):
+    """Redirect to GitHub with a fresh anti-CSRF state, remembered in a
+    short-lived cookie and checked when GitHub sends the user back."""
+    state = secrets.token_urlsafe(24)
+    response = RedirectResponse(f"{url}?{urlencode({**params, 'state': state})}")
+    _set_cookie(response, "oauth_state", state, 600)
+    return response
 
 
 class ChatRequest(BaseModel):
@@ -54,6 +93,12 @@ class ActionRequest(BaseModel):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/config")
+def public_config():
+    """Non-secret settings the frontend needs."""
+    return {"install_url": "/api/auth/github/install" if GITHUB_APP_SLUG else None}
 
 
 def _refresh_github_token(refresh_token: str) -> dict | None:
@@ -96,11 +141,9 @@ def github_login():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=500, detail="GITHUB_CLIENT_ID is not configured.")
 
-    state = secrets.token_urlsafe(24)
     params = {
         "client_id": GITHUB_CLIENT_ID,
         "redirect_uri": GITHUB_CALLBACK_URL,
-        "state": state,
         # GITHUB_CLIENT_ID here is a GitHub App's client ID (its "Iv23..."
         # prefix, and the granular per-resource consent screen GitHub shows
         # for it, both confirm this) — not a classic OAuth App. For a
@@ -111,14 +154,39 @@ def github_login():
         # real classic OAuth App instead, where it would matter.
         "scope": "repo",
     }
-    response = RedirectResponse(f"https://github.com/login/oauth/authorize?{urlencode(params)}")
-    response.set_cookie("oauth_state", state, httponly=True, samesite="lax", max_age=600)
-    return response
+    return _begin_github_redirect("https://github.com/login/oauth/authorize", params)
+
+
+@app.get("/api/auth/github/install")
+def github_install():
+    """Send the user to install the GitHub App on their account or repos.
+    With "Request user authorization (OAuth) during installation" enabled in
+    the App's settings, GitHub signs them in as part of the same flow and
+    comes back to the callback below, carrying this state."""
+    if not GITHUB_APP_SLUG:
+        raise HTTPException(status_code=500, detail="GITHUB_APP_SLUG is not configured.")
+    return _begin_github_redirect(f"https://github.com/apps/{GITHUB_APP_SLUG}/installations/new", {})
 
 
 @app.get("/api/auth/github/callback")
-def github_callback(code: str, state: str, oauth_state: str | None = Cookie(default=None)):
+def github_callback(
+    code: str | None = None,
+    state: str | None = None,
+    installation_id: str | None = None,
+    setup_action: str | None = None,
+    oauth_state: str | None = Cookie(default=None),
+):
+    if not code:
+        # Back from installing (or changing) the App without a sign-in code,
+        # e.g. "Request user authorization during installation" is off:
+        # sign in normally, which is instant once the App is authorized.
+        return RedirectResponse("/api/auth/github/login" if setup_action else FRONTEND_URL)
     if not state or state != oauth_state:
+        if setup_action:
+            # Installed from github.com directly rather than through our
+            # Install link, so there's no state to match; start a normal
+            # (state-checked) sign-in instead of trusting this code.
+            return RedirectResponse("/api/auth/github/login")
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
 
     token_res = requests.post(
@@ -164,13 +232,7 @@ def github_callback(code: str, state: str, oauth_state: str | None = Cookie(defa
 
     response = RedirectResponse(FRONTEND_URL)
     response.delete_cookie("oauth_state")
-    response.set_cookie(
-        "session_id",
-        session_id,
-        httponly=True,
-        samesite="lax",
-        max_age=int(db.SESSION_TTL.total_seconds()),
-    )
+    _set_cookie(response, "session_id", session_id, int(db.SESSION_TTL.total_seconds()))
     return response
 
 
@@ -305,3 +367,20 @@ def delete_conversation(conversation_id: uuid.UUID, session_id: str | None = Coo
     if not db.delete_conversation(conversation_id, session["user_id"]):
         raise HTTPException(status_code=404, detail="Chat not found.")
     return {"ok": True}
+
+
+if SERVE_FRONTEND:
+    # Registered last so every /api route above takes precedence. Unknown
+    # paths get index.html, letting the single-page app handle them.
+    if not (FRONTEND_DIST / "index.html").exists():
+        raise RuntimeError(f"SERVE_FRONTEND is on but {FRONTEND_DIST} has no index.html — run `npm run build` first.")
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def frontend(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found.")
+        candidate = (FRONTEND_DIST / path).resolve()
+        if path and candidate.is_file() and FRONTEND_DIST.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")

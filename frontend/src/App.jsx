@@ -331,12 +331,19 @@ function App() {
   const [user, setUser] = useState(null)
   const [repos, setRepos] = useState([])
   const [selectedRepo, setSelectedRepo] = useState('')
+  // Whose repo list is loaded, so "no repos yet" isn't mistaken for "still loading".
+  const [reposLoadedFor, setReposLoadedFor] = useState(null)
+  const [installUrl, setInstallUrl] = useState(null)
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : null))
       .then(setUser)
       .catch(() => setUser(null))
+    fetch('/api/config')
+      .then((res) => (res.ok ? res.json() : {}))
+      .then((config) => setInstallUrl(config.install_url || null))
+      .catch(() => setInstallUrl(null))
   }, [])
 
   useEffect(() => {
@@ -349,7 +356,10 @@ function App() {
       .then((res) => (res.ok ? res.json() : { repos: [] }))
       .then((data) => setRepos(data.repos || []))
       .catch(() => setRepos([]))
+      .finally(() => setReposLoadedFor(user.login))
   }, [user])
+
+  const needsInstall = !!user && reposLoadedFor === user.login && repos.length === 0
 
   const loadConversations = useCallback(() => {
     fetch('/api/conversations', { credentials: 'include' })
@@ -850,6 +860,23 @@ function App() {
                 </a>
               </div>
             )}
+
+            {needsInstall && (
+              <div className="intro-auth">
+                <p className="intro-auth-copy">
+                  Git Show can't see any of your repositories yet.{' '}
+                  {installUrl
+                    ? 'Install it on your account and pick the repositories it may use — you can change this any time.'
+                    : 'Install the Git Show GitHub App on your account, then reload this page.'}
+                </p>
+                {installUrl && (
+                  <a className="auth-btn" href={installUrl}>
+                    <GitHubMark />
+                    Install Git Show on your repositories
+                  </a>
+                )}
+              </div>
+            )}
           </div>
 
           {hasStarted && (
@@ -986,6 +1013,11 @@ function App() {
               </div>
 
               <p className="hint">Press Enter to ask, Shift-Enter for a new line</p>
+              {user && installUrl && repos.length > 0 && (
+                <p className="hint">
+                  Missing a repository? <a className="hint-link" href={installUrl}>Manage repository access</a>
+                </p>
+              )}
             </div>
           </form>
         </main>

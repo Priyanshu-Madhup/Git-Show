@@ -1535,3 +1535,13 @@
   letter-spacing: 0.05em;
   color: var(--color-muted);
 }
+
+.hint-link {
+  color: var(--color-green);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.hint-link:hover {
+  color: var(--color-green-bright);
+}
