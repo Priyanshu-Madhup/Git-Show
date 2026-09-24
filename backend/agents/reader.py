@@ -76,9 +76,11 @@ def verify_write(token, tool, args, result) -> tuple[bool, str]:
     owner, repo = args.get("owner"), args.get("repo")
     branch = args.get("branch")
     try:
-        if tool in ("edit_file", "create_or_update_file"):
+        if tool in ("edit_file", "create_or_update_file", "restore_file"):
             sha = _file_state(token, owner, repo, args["path"], branch)
-            expected = (result or {}).get("content_sha")
+            # For a restore, identical bytes give the identical blob sha as
+            # the old version, so this proves an exact copy.
+            expected = (result or {}).get("expected_sha") or (result or {}).get("content_sha")
             if sha is None:
                 return False, f"{args['path']} does not exist on {branch or 'the default branch'} after the write."
             if expected and sha != expected:

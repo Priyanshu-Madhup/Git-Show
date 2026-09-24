@@ -1,199 +1,254 @@
 # Git Show
 
-Git Show is a chat assistant for exploring and acting on GitHub repositories in plain language. Sign in with GitHub, pick a repository, and ask questions about its history, issues, and pull requests — or ask the assistant to make changes (create branches, open PRs/issues, comment, merge, etc.), which it will always propose and let you confirm before executing.
+Git Show is a chat assistant for GitHub. Sign in with GitHub, pick a repository, and ask about its code, history, issues, and pull requests in plain language — or ask for a change (a branch, a file edit, a pull request, an issue, a merge). Every change is shown to you first, with the exact diff where it applies, and only runs after you confirm it; Git Show then re-reads GitHub to make sure it landed.
 
-It's a two-part app: a **FastAPI** backend that handles GitHub OAuth, session storage, and an LLM tool-calling loop, and a **React + Vite** frontend that renders a single-page chat UI.
+It has two parts:
+- a **FastAPI** backend: GitHub sign-in, a team of AI agents, and Postgres (Supabase) for sessions, chat history, memory, and an execution trace;
+- a **React + Vite** frontend: a landing page at `/` and the chat app at `/app`.
 
 ## How it works
 
-1. **Sign in with GitHub** — the user clicks the avatar icon in the top bar, which starts a standard OAuth Authorization Code flow against a GitHub OAuth App.
-2. **Pick a repository** — once signed in, the frontend fetches the user's repos and shows a picker; the selected `owner/repo` is sent with every chat message as context.
-3. **Ask a question** — the message, prior turns, and selected repo are POSTed to `/api/chat`. The backend builds a system prompt and calls the Gemini-hosted LLM (via Gemini's OpenAI-compatible endpoint) with a large set of GitHub tool schemas attached (function calling).
-4. **Tool calling loop** — the backend runs up to `MAX_TOOL_ROUNDS` (10) rounds: if the model requests a **read** tool (list commits, get a diff, fetch an issue, etc.), the backend executes it immediately against the GitHub REST API and feeds the result back to the model. If the model requests a **write** tool (create a branch, open a PR, merge, delete a branch, etc.), the backend does *not* execute it — it stores the call as a "pending action" and returns it to the frontend for explicit human confirmation. Before the loop starts, if a repo is selected the backend pre-fetches (and caches for 10 minutes) that repo's file tree and injects it as context, so the model doesn't have to spend a tool round discovering the project layout on its own. If the round budget still runs out, the backend forces one last tools-disabled completion so the model writes up whatever it already found instead of dead-ending.
-5. **Confirm or cancel** — the frontend renders a proposed-action card with the tool name and arguments. Confirming calls `/api/github/actions/execute`, which runs the actual GitHub write and asks the model for a one-line summary of the result. Cancelling just discards the pending action.
-6. **Streamed reply** — replies aren't streamed from the LLM itself (the Gemini call is synchronous); instead, the frontend does a client-side typewriter animation over the returned text for a chat-like feel.
+```
+             user message
+                  │
+            ┌─────▼──────┐   works out the goal, then decides:
+            │ Orchestrator│  one step, or does it need a plan?
+            └─┬───┬─────┬┘
+     one step │   │     │ one step
+   (read-only)│   │     │ (one change)
+              │   │ needs a plan
+              ▼   ▼     ▼
+          Reader  Planning agent  Writer ── you confirm ──▶ GitHub
+             ▲      │   ▲   │                                │
+             └─step─┘   │   └──step──▶ Writer                │
+               result   │                                   ▼
+                        └────────── result ─────────── Verifier (re-reads GitHub)
+```
+
+1. **Orchestrator** ([orchestrator.py](backend/orchestrator.py)) — reads the message and works out the goal in one sentence, then decides the route:
+   - **read-only** requests (questions, lookups, explaining code) go to the **Reader** in one step;
+   - **one change** that doesn't depend on reading files first (create a branch, open an issue) goes to the **Writer** in one step;
+   - anything bigger goes to the **Planning agent**.
+   It never touches GitHub itself. If the Reader discovers a request needs a change after all, it hands it back and the orchestrator passes it to the planner.
+2. **Planning agent** ([agents/planner.py](backend/agents/planner.py)) — owns multi-step runs. It writes a plan in which every step has an *expected* outcome, sends each step to the Reader or Writer, and gets every output back. If an output is what the step expected, the plan continues; if not, the planner revises the plan and carries on with the new one.
+3. **Reader** ([agents/reader.py](backend/agents/reader.py)) — read-only investigation with 40 read tools: the repository index, file outlines, single functions, line ranges, commits, diffs, issues, pull requests, and the user's saved history (memory). It never sees a write tool.
+4. **Writer** ([agents/writer.py](backend/agents/writer.py)) — proposes exactly one change, using only the 19 write tools. The proposal is checked before you see it (an `edit_file` whose text no longer matches, or a branch that already exists, is caught here) and shown with a diff. It runs only after you press **Confirm**.
+5. **Verifier** — after a confirmed write, re-reads GitHub to check the change really landed (the file has the committed content, the branch exists, the PR is merged…), then the repository index is refreshed.
+
+Progress streams to the browser as it happens (agent hand-offs, tool calls, plan revisions), so the chat shows a live timeline of which agent is doing what.
+
+### Guardrails
+
+- **Nothing changes without your confirmation**, and destructive actions (deleting a file or branch, merging) get a red warning card.
+- **No runaway runs.** There's no fixed step cap; instead, identical tool calls are answered from cache and flagged, a plan step that keeps coming back ends the run, and after 100 tool calls a run pauses with a **Continue** button.
+- **Right repository.** A change aimed at a repository you didn't select (and didn't name) is rejected; a request about your GitHub profile can only write to your profile repository (`<login>/<login>`).
+- **Cancel means stop.** Cancelling a proposal ends that attempt; the planner never re-proposes it.
+
+## Reading code without reading everything
+
+- **Repository index** ([repo_index.py](backend/repo_index.py)) — each branch's file tree is stored in Postgres, stamped with the commit it came from. Every use makes one small GitHub request for the branch's head commit, which both proves the user can still see the repo and tells whether the stored tree is stale; the tree is only refetched when the commit moved, and after every confirmed write.
+- **Codebase outline** ([codebase.py](backend/codebase.py)) — for "explain this project" questions, the whole repository is downloaded once as an archive and every source file's classes and functions are listed (signature, line number, first docstring line), cached per commit. The orchestrator hands this outline to the Reader up front, so it reasons from the real code and only opens function bodies where it must.
+- **Targeted reads** — `get_file_outline`, `get_function_source` (one function, returned whole), and `get_file_lines` (an exact range). Files over 200 lines come back from `get_file_contents` as an outline instead of their full body.
+
+## Memory
+
+Stored in Postgres, in three layers:
+
+| Layer | What | Updated |
+|---|---|---|
+| Conversation | `messages` — every message, with its agent timeline and plan | as each turn starts and ends |
+| Summary | `conversation_summaries` — a rolling summary of each chat | after every assistant message, in the background |
+| What the agents did | `agent_runs`, `plans`, `agent_steps`, `tool_calls`, `pending_actions` | as each step runs |
+
+At the start of every turn, the agents get the chat's summary plus every message it doesn't cover yet, verbatim, so a slow or failed summary never loses a turn. The Reader can also look further back with `query_memory`: SQL it writes over read-only views of the user's own chats, runs, plans, and tool calls (see [Security notes](#security-notes) for how that's contained).
 
 ## Architecture
 
 ```
-frontend (React/Vite, :5173)  --/api proxy-->  backend (FastAPI, :8000)  -->  GitHub REST API
-                                                        |
-                                                        --> Gemini (LLM tool calling)
+browser ──▶ frontend (React/Vite)
+               │  /api/*  (Vite proxy locally; a Vercel rewrite when hosted)
+               ▼
+            backend (FastAPI) ──▶ GitHub REST API
+               │        └──────▶ Gemini (OpenAI-compatible endpoint)
+               ▼
+            Postgres (Supabase)
 ```
 
-- The Vite dev server proxies any `/api/*` request to `http://localhost:8000`, so the frontend only ever talks to its own origin.
-- Sessions and pending write-actions are kept in-memory (plain Python dicts) — fine for a single local dev process, not for multiple workers or production (see [Known limitations](#known-limitations)).
+- The browser only ever talks to its own origin; `/api/*` is forwarded to the backend, so the session cookie is first-party.
+- Database writes the user doesn't need to wait on (trace rows, messages, summaries) go through a single background queue ([db/background.py](backend/db/background.py)), in order. Before a run pauses for a confirmation or Continue, the queue is flushed so the next request can resume from saved state.
 
 ## Tech stack
 
 **Backend**
-- [FastAPI](https://fastapi.tiangolo.com/) — HTTP API and routing
-- [Uvicorn](https://www.uvicorn.org/) — ASGI server
-- [Gemini API](https://ai.google.dev/) — LLM inference, called via the `openai` Python SDK against Gemini's OpenAI-compatible endpoint (default model `gemini-flash-lite-latest`)
-- `requests` — GitHub REST API calls
-- `python-dotenv` — loads `.env`
-- Pydantic — request/response models
+- FastAPI + Uvicorn
+- Gemini via the `openai` Python SDK against Gemini's OpenAI-compatible endpoint (default model `gemini-flash-lite-latest`); plans and routing decisions use JSON-schema structured output
+- Postgres on Supabase via `psycopg` 3 + `psycopg-pool`
+- `cryptography` (Fernet) — GitHub tokens are encrypted at rest
+- `sqlglot` — parses and validates the SQL the memory tool runs
+- `requests` — GitHub REST calls; `ddgs` — web search as a last resort
 
 **Frontend**
-- React 19 + Vite 8
-- Plain CSS (`App.css`, `index.css`) — no CSS framework
-- `@fontsource` (Fraunces + Inter) for typography
-- `oxlint` for linting
-- Playwright — used only for local, manual screenshot scripts (not a test suite)
+- React 19 + Vite 8, plain CSS
+- Three.js — the landing page's 3D commit graph (loaded only on that page, in its own chunk)
+- `@fontsource` Fraunces + Inter
+- `oxlint`; Playwright only for ad-hoc local screenshot scripts
 
 ## Project structure
 
 ```
 git_show/
 ├── backend/
-│   ├── main.py                # FastAPI app: OAuth, sessions, /api/chat, action confirm/cancel
-│   ├── github_tools.py        # GitHub REST wrappers + tool schemas exposed to the LLM
+│   ├── main.py            # HTTP routes: sign-in, install, chat, confirm/cancel, runs, conversations
+│   ├── orchestrator.py    # goal + route: Reader / Writer in one step, or the Planning agent
+│   ├── runtime.py         # run plumbing: events, saving state, the confirmation pause, apply + verify writes
+│   ├── agents/
+│   │   ├── planner.py     # Planning agent: plans, checks each output, revises
+│   │   ├── reader.py      # Reader agent + post-write verification
+│   │   ├── writer.py      # Writer agent: one validated proposal per step
+│   │   ├── common.py      # run context, tool-calling loop, budget and loop detection
+│   │   ├── toolsets.py    # which tools each agent can see
+│   │   └── prompts.py     # shared prompt rules
+│   ├── github_tools.py    # GitHub REST wrappers + tool schemas
+│   ├── repo_index.py      # persistent per-branch file index
+│   ├── codebase.py        # whole-codebase outline from one archive download
+│   ├── memory.py          # query_memory: validated, sandboxed SQL over the user's history
+│   ├── summaries.py       # rolling conversation summaries
+│   ├── llm.py             # Gemini client, JSON/schema completions
+│   ├── db/
+│   │   ├── schema.sql     # all tables, memory views, and roles (idempotent)
+│   │   ├── migrate.py     # applies schema.sql
+│   │   ├── __init__.py    # sessions, conversations, messages, summaries
+│   │   ├── runs.py        # runs, plans, steps, tool calls, pending actions, trace
+│   │   ├── repos.py       # repository index storage
+│   │   └── background.py  # ordered background writer
 │   ├── requirements.txt
-│   ├── .env.example           # template for required environment variables
-│   └── .env                   # local secrets (gitignored)
+│   └── .env.example
 └── frontend/
     ├── src/
-    │   ├── App.jsx             # entire chat UI: auth, repo picker, message list, action cards
-    │   ├── App.css / index.css # styling
-    │   ├── main.jsx             # React entry point
-    │   └── assets/logo.png
-    ├── index.html
-    ├── vite.config.js          # dev server + /api proxy to :8000
-    ├── package.json
-    ├── screenshot.mjs / screenshot2.mjs  # ad-hoc Playwright scripts for manual UI screenshots
-    └── .oxlintrc.json
+    │   ├── main.jsx           # routes "/" to Landing and "/app" to App; starts backend warm-up
+    │   ├── Landing.jsx/.css   # landing page: 3D scroll story, agent diagram
+    │   ├── landing/
+    │   │   ├── commitGraph3d.js  # Three.js commit graph scene
+    │   │   ├── Transcript.jsx    # line-by-line printed agent transcripts
+    │   │   └── AgentTree.jsx     # animated agent diagram
+    │   ├── App.jsx/.css       # chat app: history sidebar, agent timeline, plan card, confirm card
+    │   ├── warmup.js          # wakes a sleeping backend on page load
+    │   └── index.css
+    ├── vercel.json            # /api/* rewrite to the backend when hosted on Vercel
+    └── vite.config.js         # dev server + /api proxy to :8000
 ```
 
-## Setup
+## Setup (local)
 
 ### Prerequisites
-- Python 3.12+
-- Node.js 18+ (for Vite 8 / React 19)
+- Python 3.12+ and Node.js 18+
 - A [Gemini API key](https://aistudio.google.com/apikey)
-- A GitHub app registered as either:
-  - a classic [GitHub OAuth App](https://github.com/settings/developers) — `GITHUB_CLIENT_ID`/`SECRET` are the OAuth App's; grant access at auth time via the `scope` param `main.py` sends to the authorize URL, or
-  - a [GitHub App](https://github.com/settings/apps) using its user-to-server OAuth flow — same `GITHUB_CLIENT_ID`/`SECRET` fields, but access is governed entirely by the **Permissions & events** configured on the App itself (the `scope` param is ignored). This is what `GITHUB_APP_ID` in `.env.example` is for, and what a client ID with an `Iv23...`-style prefix indicates. If a write tool 403s despite a signed-in user having full rights on GitHub, check the App's repository permissions (e.g. **Contents** must be Read & write for branch/file/release operations) before suspecting the code.
-
-  Either way, register it with:
-  - **Homepage URL**: `http://localhost:5173`
-  - **Authorization callback URL**: `http://localhost:5173/api/auth/github/callback`
+- A Supabase project (any Postgres works) — you need its **session pooler** connection string
+- A [GitHub App](https://github.com/settings/apps) with:
+  - **Callback URL** `http://localhost:5173/api/auth/github/callback`
+  - **Permissions** for what Git Show should do, e.g. Contents, Pull requests, Issues: read & write; Metadata: read. Repository access is governed by these permissions, not by anything the app requests at sign-in — if a write fails with 403, check them first.
 
 ### Backend
 
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
-copy .env.example .env        # then fill in real values
+cp .env.example .env              # fill in real values
+python db/migrate.py              # creates tables, memory views, and roles
 uvicorn main:app --reload --port 8000
 ```
 
-Environment variables (`backend/.env`):
-
-| Variable | Purpose |
-|---|---|
-| `GEMINI_API_KEY` | API key for Gemini inference |
-| `GEMINI_MODEL` | Model id (default `gemini-flash-lite-latest`, Gemini's cheapest Flash tier) |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth App credentials |
-| `GITHUB_CALLBACK_URL` | OAuth redirect target (must match the app's registered callback) |
-| `FRONTEND_URL` | Where to redirect the browser after OAuth completes |
+| Variable | Required | Purpose |
+|---|---|---|
+| `GEMINI_API_KEY` | yes | Gemini API key |
+| `GEMINI_MODEL` | no | Model id (default `gemini-flash-lite-latest`) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | yes | GitHub App's client credentials |
+| `GITHUB_CALLBACK_URL` | yes | Must match a callback URL registered on the App |
+| `FRONTEND_URL` | yes | Where users land after sign-in (they're sent to `FRONTEND_URL/app`) |
+| `SUPABASE_DB_URL` | yes | Postgres connection string (URL-encode special characters in the password) |
+| `TOKEN_ENCRYPTION_KEY` | yes | Fernet key for encrypting GitHub tokens; generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Changing it signs everyone out. |
+| `GITHUB_APP_SLUG` | no | The App's URL name (`github.com/apps/<slug>`); shows the **Install** button |
+| `SERVE_FRONTEND` | no | `1` to serve the built frontend from FastAPI (single-server hosting) |
+| `CORS_ORIGINS` | no | Comma-separated origins, only if the frontend is on another origin |
+| `COOKIE_SECURE` | no | Defaults to on when `FRONTEND_URL` is https |
 
 ### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev      # starts Vite on :5173, proxying /api to :8000
+npm run dev        # Vite on :5173, proxying /api to :8000
 ```
 
-Then open `http://localhost:5173`. Both servers must be running for the app to work.
-
-Other frontend scripts:
-- `npm run build` — production build
-- `npm run preview` — preview the production build
-- `npm run lint` — run oxlint
+Open `http://localhost:5173` for the landing page, `http://localhost:5173/app` for the chat. `npm run build` makes a production build; `npm run lint` runs oxlint.
 
 ## Deploying
 
-Local development needs none of this — every setting below is optional and defaults to the local setup.
+Local development needs none of this.
 
-### 1. GitHub App settings (github.com → Settings → Developer settings → GitHub Apps → your app)
+### GitHub App settings
 
-- **Callback URL**: add `https://<your-domain>/api/auth/github/callback` (keep the localhost one too; GitHub Apps accept several).
-- **Request user authorization (OAuth) during installation**: on — installing then signs the user in, in one step.
-- **Where can this GitHub App be installed?** → *Any account*, so other people can install it.
-- **Permissions**: whatever Git Show should be able to do (e.g. Contents, Pull requests, Issues: read & write; Metadata: read).
+- **Callback URL**: add `https://<your-domain>/api/auth/github/callback` (keep the localhost one; Apps accept several).
+- **Request user authorization (OAuth) during installation**: on — installing then also signs the user in.
+- **Where can this GitHub App be installed?** → *Any account*, if other people should use it.
 
-Signing in is not the same as installing: a user's token only reaches repositories where the app is **installed**. When a signed-in user has no accessible repositories, Git Show shows an **Install Git Show on your repositories** button (and a "Manage repository access" link otherwise), which goes to `/api/auth/github/install`. Both need `GITHUB_APP_SLUG`.
+Signing in is not the same as installing: a user's token only reaches repositories where the App is **installed**. A signed-in user with no accessible repositories sees an **Install Git Show on your repositories** button (`/api/auth/github/install`, needs `GITHUB_APP_SLUG`).
 
-### 2. One origin, one process (recommended)
+### Frontend on Vercel, backend on Render (current setup)
 
-Build the frontend and let FastAPI serve it, so the browser, API, and session cookie share one origin:
+- **Vercel**: import the repo with **Root Directory** `frontend` (Vite preset, `npm run build`, output `dist`). No environment variables — the frontend has no secrets. [`frontend/vercel.json`](frontend/vercel.json) rewrites `/api/*` to the backend, keeping one origin.
+- **Render** (web service): **Root Directory** `backend`, build `pip install -r requirements.txt`, start `uvicorn main:app --host 0.0.0.0 --port $PORT`, health check `/api/health`. Set the backend variables above, with `FRONTEND_URL` and `GITHUB_CALLBACK_URL` on the Vercel domain, and the same `TOKEN_ENCRYPTION_KEY` as anywhere else that shares the database.
+- Render's free tier sleeps after 15 idle minutes and takes up to a minute to wake. The frontend wakes it as soon as any page loads and pings it every 10 minutes while a page is visible; a sign-in click before it's awake waits on the site with a "Starting the server…" note.
+
+### Alternatively: one server
 
 ```bash
-cd frontend && npm install && npm run build      # -> frontend/dist
-cd ../backend && pip install -r requirements.txt
-SERVE_FRONTEND=1 uvicorn main:app --host 0.0.0.0 --port $PORT
+cd frontend && npm install && npm run build
+cd ../backend && SERVE_FRONTEND=1 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
-Environment on the host (in addition to the ones in `.env.example`):
+Either way, the backend needs a long-running host (Render, Railway, Fly.io, a VM): runs stream for up to a minute or more and database writes happen on a background thread, which serverless functions would cut off. Host it near the database — every query crosses that distance.
 
-| Variable | Value |
-|---|---|
-| `FRONTEND_URL` | `https://<your-domain>` (https also turns on Secure cookies) |
-| `GITHUB_CALLBACK_URL` | `https://<your-domain>/api/auth/github/callback` |
-| `GITHUB_APP_SLUG` | the app's URL name, from `github.com/apps/<slug>` |
-| `SERVE_FRONTEND` | `1` |
-
-If the frontend is hosted separately instead, point it at the API through a rewrite of `/api/*` (keeping one origin), or set `CORS_ORIGINS` to the frontend's origin — though cross-site cookies are more fragile than one origin.
-
-### 3. Where to host
-
-Use a long-running server (Railway, Render, Fly.io, a VM): agent runs stream for up to a minute and database writes happen on a background thread, which serverless functions would time out or kill. Put it in the same region as the Supabase project — every database round trip crosses that distance. Run `python db/migrate.py` once against the production database before first start.
-
-## API reference (backend)
+## API reference
 
 | Method & path | Purpose |
 |---|---|
 | `GET /api/health` | Liveness check |
-| `GET /api/auth/github/login` | Redirects to GitHub's OAuth authorize page |
-| `GET /api/auth/github/callback` | OAuth callback; exchanges code for a token, creates a session cookie |
-| `GET /api/auth/me` | Returns the signed-in user (login/name/avatar) or 401 |
-| `POST /api/auth/logout` | Clears the session |
-| `GET /api/github/repos` | Lists the signed-in user's repos (for the repo picker) |
-| `POST /api/chat` | Main chat endpoint; runs the tool-calling loop, may return a `pending_action` |
-| `POST /api/github/actions/execute` | Executes a previously proposed write action by id |
-| `POST /api/github/actions/cancel` | Discards a previously proposed write action |
+| `GET /api/config` | Public settings for the frontend (the install link, if configured) |
+| `GET /api/auth/github/login` | Start GitHub sign-in (state-checked) |
+| `GET /api/auth/github/install` | Start installing the GitHub App (state-checked) |
+| `GET /api/auth/github/callback` | Finish sign-in or installation; sets the session cookie, redirects to `/app` |
+| `GET /api/auth/me` | The signed-in user, or 401 |
+| `POST /api/auth/logout` | End the session |
+| `GET /api/github/repos` | The user's accessible repositories, for the picker |
+| `POST /api/chat` | Start a run (signed-in only); streams NDJSON events |
+| `POST /api/github/actions/execute` | Confirm a proposed change; streams the rest of the run |
+| `POST /api/github/actions/cancel` | Cancel a proposed change; streams the wrap-up |
+| `POST /api/runs/{id}/continue` | Resume a run that paused after its tool budget |
+| `GET /api/runs/{id}/trace` | A run's full trace: plan versions, steps, tool calls |
+| `GET /api/conversations` | The user's chats, newest first |
+| `GET /api/conversations/{id}` | One chat with its messages |
+| `DELETE /api/conversations/{id}` | Delete a chat |
 
-Auth is cookie-based (`session_id`, httponly), with a short-lived `oauth_state` cookie used to prevent CSRF during the OAuth handshake.
+Streaming endpoints send one JSON object per line: `agent` (a hand-off), `step` (a tool call), `plan` (a new plan version), and a final `final` event with the reply, and optionally `pending_action`, `can_continue`, or `signed_out`.
 
-## GitHub tools exposed to the LLM
+## Frontend
 
-Defined in `backend/github_tools.py`, split into two sets:
-
-**Read tools** (executed automatically, no confirmation): `list_commits`, `get_commit`, `get_file_contents`, `list_branches`, `list_issues`, `list_pull_requests`, `get_pull_request`, `get_pull_request_diff`, `get_pull_request_files`, `list_pull_request_reviews`, `list_pull_request_commits`, `search_code`, `search_repositories`, `search_issues`, `search_users`, `list_releases`, `get_latest_release`, `list_tags`, `list_contributors`, `list_forks`, `list_stargazers`, `list_workflows`, `list_workflow_runs`, `compare_commits`, `get_me`, `get_user`, `list_user_repos`, `get_repository`, `list_organizations`, `get_issue`, `list_issue_comments`.
-
-**Write tools** (always require user confirmation via the action card): `create_branch`, `create_or_update_file`, `delete_file`, `create_pull_request`, `merge_pull_request`, `create_issue`, `add_issue_comment`, `fork_repository`, `create_repository`, `star_repository`, `unstar_repository`, `update_issue`, `update_pull_request`, `submit_pull_request_review`, `request_pull_request_reviewers`, `create_release`, `delete_branch`, `add_collaborator`.
-
-All tools call the GitHub REST API directly with the signed-in user's OAuth token — there is no GitHub App installation flow currently wired up in `main.py`, despite `.env.example` referencing `GITHUB_APP_ID`.
-
-## Frontend behavior notes
-
-- The landing view shows a centered search field with example query chips; on first message it "docks" the search bar to the bottom using a manual FLIP animation (`useLayoutEffect` computing/transitioning `transform`), then reveals the scrolling message list.
-- Assistant replies are revealed with a client-side typewriter effect (character-by-character `setInterval`), not real token streaming from the backend.
-- Chat responses are rendered as a small hand-rolled Markdown subset: bold/italic/inline-code, bullet/numbered lists, tables, single-line headings, and paragraphs — via `formatMessage`/`formatInline` in `App.jsx`, with HTML-escaping applied before any markup injection.
-- Emojis are stripped server-side (`strip_emoji` in `main.py`) before replies are returned.
-- Requests to `/api/chat` have a 170s client-side abort timeout, with a "still working" hint shown after 4s.
+- **Landing page (`/`)**: a Three.js commit graph that grows on load while the headline prints letter by letter; scrolling flies the camera through a four-stage story (ask, plan, confirm, remember), each stage printing a real transcript line by line, with side branches colored by agent. A "Who does what" section animates the agent tree with pulses tracing a request. Reduced-motion users get the content without motion.
+- **Chat (`/app`)**: signed-out visitors see the chat but can't type until they sign in. A sidebar lists past chats; each reply shows its agent timeline (collapsible), the plan checklist, and, for proposals, a card with **View changes** (diff), **Details**, **Cancel**, and **Confirm**.
+- Replies are rendered from a small, HTML-escaped Markdown subset (headings, lists, tables, code blocks, inline code, bold/italic).
 
 ## Security notes
 
-- `backend/.gitignore` already excludes `.env` and `*.pem`, so secrets and the observed `gitshowmelegend...private-key.pem` file are not tracked by git.
-- Session and pending-action state is kept in an in-memory dict (`SESSIONS`, `PENDING_ACTIONS`) — restarting the backend logs everyone out and drops any unconfirmed actions.
-- Write actions are never auto-executed by the model; they always round-trip through the frontend for an explicit user confirmation before hitting the GitHub API.
+- **Secrets** stay in `backend/.env` (gitignored) and the host's environment; the frontend has none.
+- **Sessions**: the cookie is httponly, SameSite=Lax, and Secure over https; only a SHA-256 hash of it is stored. GitHub access and refresh tokens are encrypted with `TOKEN_ENCRYPTION_KEY`; expired tokens are refreshed, and a token GitHub rejects signs the user out.
+- **Writes** never run without confirmation; confirmations are single-use (a double-click can't run a write twice) and expire after an hour.
+- **Memory SQL** is model-written, so it's contained three ways: it must parse as a single `SELECT` over the `memory.*` views using allow-listed functions only; it runs as the `gitshow_memory` role, which can read nothing else; and it runs read-only with a 5-second timeout. The views only show the signed-in user's own rows.
+- **Database**: every table has row-level security with no policies, so the Supabase publishable key can read nothing; the backend connects directly as `postgres`. Abandoned transactions are closed after 60 seconds (`idle_in_transaction_session_timeout`).
 
 ## Known limitations
 
-- In-memory session/action storage means the backend cannot run with multiple workers/processes without a shared store (e.g. Redis).
-- No automated test suite; `screenshot.mjs`/`screenshot2.mjs` are manual Playwright scripts for grabbing UI screenshots during development, not CI tests.
-- CORS and cookie settings (`samesite="lax"`, no `secure` flag) are configured for local HTTP development, not production HTTPS deployment.
+- The first request after the free Render instance has slept waits up to a minute (see [Deploying](#deploying)).
+- Every model call uses `gemini-flash-lite-latest` — fast and cheap, but a multi-step change can take 30–60 seconds, and much of the orchestration exists to keep a small model on track.
+- In-process caches (index head checks, codebase outlines) and the background writer are per process; multiple workers work, but each keeps its own caches.
+- No automated test suite in the repository; the agent flows were tested with scripted model responses against a real database, and against the live model during development.

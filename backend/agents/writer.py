@@ -26,6 +26,10 @@ SYSTEM_PROMPT = (
     "- Call exactly one tool. Your change will be shown to the user to confirm before it runs.\n"
     "- Only make the change the instruction asks for. Never create files, docs, or anything else "
     "the user didn't request; if the instruction is really a question, call no tool and say so.\n"
+    "- To undo, revert, or roll back a file, use restore_file with the commit to restore from; "
+    "never retype old content.\n"
+    "- Replace an existing file's whole content (create_or_update_file) only with the full "
+    "current text in the evidence; otherwise it will be refused.\n"
     "- To change part of an existing file, use edit_file with old_text copied verbatim from the "
     "evidence (exact indentation and whitespace), including enough surrounding lines to be "
     "unique. Use create_or_update_file only for new files or full rewrites you can see whole.\n"
@@ -44,6 +48,28 @@ SYSTEM_PROMPT = (
 class WriterOutcome:
     proposal: dict | None
     text: str
+    # Set when the change needs a file read first (the Writer can't read):
+    # the orchestrator hands the request to the Planning agent instead.
+    needs_read: str | None = None
+
+
+def _read_in_full(evidence, owner, repo, path):
+    """Whether this run holds a complete copy of owner/repo/path, read by
+    the Reader — the only safe basis for replacing its whole content."""
+    target = path.lower().lstrip("/")
+    for e in evidence or []:
+        args, result = e.get("arguments") or {}, e.get("result") or {}
+        if (args.get("owner") or "").lower() != owner.lower() or (args.get("repo") or "").lower() != repo.lower():
+            continue
+        if str(result.get("path") or args.get("path") or "").lower().lstrip("/") != target:
+            continue
+        if e.get("tool") in ("get_file_contents", "get_readme"):
+            if result.get("content") is not None and not result.get("truncated") and not result.get("content_omitted"):
+                return True
+        if e.get("tool") == "get_file_lines":
+            if result.get("start_line") == 1 and result.get("end_line") == result.get("total_lines") and not result.get("truncated"):
+                return True
+    return False
 
 
 def _evidence_message(evidence):
@@ -65,6 +91,7 @@ def _evidence_message(evidence):
 _TEMPLATES = {
     "create_branch": lambda a: f"Create branch **{a.get('branch')}** from **{a.get('from_branch') or 'the default branch'}**",
     "delete_branch": lambda a: f"Permanently delete branch **{a.get('branch')}**",
+    "restore_file": lambda a: f"Restore `{a.get('path')}` exactly as it was at commit `{str(a.get('ref', ''))[:7]}`",
     "create_pull_request": lambda a: f"Open a pull request **\"{a.get('title')}\"** from **{a.get('head')}** into **{a.get('base')}**",
     "merge_pull_request": lambda a: f"Merge pull request **#{a.get('pull_number')}** ({a.get('merge_method') or 'merge'})",
     "create_issue": lambda a: f"Open an issue titled **\"{a.get('title')}\"**",
@@ -202,6 +229,21 @@ def propose(ctx, *, instruction, context_messages, observations_text, evidence):
             continue
         try:
             preview = github_tools.preview_write(ctx.token, name, arguments)
+            # Replacing an existing file's whole content without having read
+            # all of it would silently drop whatever wasn't seen.
+            if (
+                name == "create_or_update_file"
+                and preview
+                and not preview.get("new_file")
+                and not _read_in_full(evidence, arguments.get("owner", ""), arguments.get("repo", ""), arguments.get("path", ""))
+            ):
+                where = f"{arguments.get('owner')}/{arguments.get('repo')}/{arguments.get('path')}"
+                return WriterOutcome(
+                    None,
+                    f"I need to read {where} in full before replacing it (or restore it from history with "
+                    "restore_file), so nothing in it gets lost.",
+                    needs_read=where,
+                )
         except github_tools.WriteBlocked as exc:
             return WriterOutcome(None, f"I didn't propose that change: {exc}")
         except (ValueError, KeyError, requests.HTTPError) as exc:

@@ -34,7 +34,9 @@ INTERPRET_PROMPT = (
     "   - writer: exactly one GitHub change that doesn't depend on reading existing file "
     "contents first — create/delete a branch, open an issue or PR, comment, merge a named PR, "
     "star, fork, create a brand-new file whose full content the user gave.\n"
-    "   - needs_planning: several steps — editing existing code (it must be read first), "
+    "   - needs_planning: several steps — editing or rewriting any existing file (it must be "
+    "read first), undoing/reverting/rolling back anything (the history must be looked up "
+    "first), "
     "several changes, investigation followed by a change, or anything whose approach depends "
     "on what is found.\n"
     "3. changes_github: true only if the user explicitly asks to create, change, delete, merge, "
@@ -162,9 +164,17 @@ def _dispatch(ctx):
             evidence=[],
         )
         if outcome.proposal is None:
-            # Usually missing information (e.g. no commit message) — the
-            # Writer's explanation goes back to the user as a question.
             ctx.finish_step(step_id, "failed", outcome.text)
+            if outcome.needs_read:
+                # The change depends on a file the Writer can't read: plan it,
+                # so the Reader reads it first.
+                yield runtime.agent_event(
+                    ctx, "writer", f"Writer agent: needs {outcome.needs_read} read first — back to the orchestrator"
+                )
+                yield from _hand_to_planner(ctx)
+                return
+            # Usually missing information — the Writer's explanation goes
+            # back to the user as a question.
             yield runtime.finish(ctx, outcome.text)
             return
         yield from runtime.await_confirmation(ctx, step_id, outcome, instruction=decision["instruction"])

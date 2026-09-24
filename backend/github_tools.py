@@ -108,6 +108,7 @@ WRITE_TOOLS = {
     "create_branch",
     "create_or_update_file",
     "edit_file",
+    "restore_file",
     "delete_file",
     "create_pull_request",
     "merge_pull_request",
@@ -336,7 +337,15 @@ def get_readme(token, owner, repo, ref=None):
     content = ""
     if data.get("encoding") == "base64" and data.get("content"):
         content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
-    return {"found": True, "path": data.get("path"), "content": content[:8000], "url": data.get("html_url")}
+    content, truncated = _cap(content)
+    return {
+        "found": True,
+        "path": data.get("path"),
+        "total_lines": content.count("\n") + 1,
+        "truncated": truncated,
+        "content": content,
+        "url": data.get("html_url"),
+    }
 
 
 def get_repo_tree(token, owner, repo, ref=None):
@@ -882,6 +891,55 @@ def _unified_diff(old_text, new_text, path):
     return "\n".join(diff)
 
 
+def _file_bytes_b64(token, owner, repo, path, ref=None):
+    """A file's exact bytes (base64) and blob sha at ref, or (None, None) if
+    it doesn't exist there. No decoding, so a restore is byte-for-byte."""
+    params = {"ref": ref} if ref else None
+    res = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}", headers=_headers(token), params=params, timeout=15
+    )
+    if res.status_code == 404:
+        return None, None
+    _check(res)
+    data = res.json()
+    if isinstance(data, list):
+        raise ValueError(f"{path} is a directory, not a file.")
+    if data.get("encoding") == "base64" and data.get("content"):
+        return data["content"].replace("\n", ""), data["sha"]
+    raw = _get(token, f"/repos/{owner}/{repo}/contents/{path}", params=params, accept="application/vnd.github.raw")
+    return base64.b64encode(raw.content).decode(), data["sha"]
+
+
+def restore_file(token, owner, repo, path, ref, message, branch=None):
+    """Put a file back exactly as it was at an earlier commit, copying its
+    bytes from GitHub's history — nothing is retyped."""
+    old_b64, old_sha = _file_bytes_b64(token, owner, repo, path, ref=ref)
+    if old_b64 is None:
+        raise WriteBlocked(f"{path} didn't exist at {ref[:10]}, so there's nothing to restore.")
+    _current, current_sha = _file_bytes_b64(token, owner, repo, path, ref=branch)
+    if current_sha == old_sha:
+        raise WriteBlocked(f"{path} already matches its version at {ref[:10]}.")
+    body = {"message": message, "content": old_b64}
+    if current_sha:
+        body["sha"] = current_sha
+    if branch:
+        body["branch"] = branch
+    res = requests.put(
+        f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}", headers=_headers(token), json=body, timeout=15
+    )
+    _check(res)
+    data = res.json()
+    return {
+        "path": path,
+        "branch": branch,
+        "restored_from": ref,
+        "commit_sha": data["commit"]["sha"],
+        "content_sha": data["content"]["sha"],
+        "expected_sha": old_sha,
+        "url": data["content"]["html_url"],
+    }
+
+
 def preview_write(token, tool, args):
     """What a proposed write would change, for the confirmation card's
     "View changes". Raises ValueError if the write can't apply (e.g. an
@@ -906,6 +964,25 @@ def preview_write(token, tool, args):
             "path": args["path"],
             "new_file": text is None,
             "diff": _unified_diff(text or "", args.get("content", ""), args["path"]),
+        }
+    if tool == "restore_file":
+        ref = args.get("ref") or ""
+        old_text, old_sha = _fetch_file(token, owner, repo, args["path"], ref=ref)
+        if old_text is None:
+            raise WriteBlocked(f"{args['path']} is a directory.")
+        try:
+            current_text, current_sha = _fetch_file(token, owner, repo, args["path"], ref=args.get("branch"))
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 404:
+                raise
+            current_text, current_sha = "", None
+        if current_sha == old_sha:
+            raise WriteBlocked(f"{args['path']} already matches its version at {ref[:10]}.")
+        return {
+            "kind": "diff",
+            "path": args["path"],
+            "restored_from": ref,
+            "diff": _unified_diff(current_text or "", old_text, args["path"]),
         }
     if tool in ("create_branch", "delete_branch"):
         # Catch the common failures before the user is asked to confirm.
@@ -1146,6 +1223,7 @@ TOOL_FUNCTIONS = {
     "web_search": web_search,
     "create_branch": create_branch,
     "create_or_update_file": create_or_update_file,
+    "restore_file": restore_file,
     "edit_file": edit_file,
     "delete_file": delete_file,
     "create_pull_request": create_pull_request,
@@ -1478,6 +1556,31 @@ TOOL_SCHEMAS = [
                     "branch": _prop(description="Branch to commit to; defaults to the default branch"),
                 },
                 "required": ["owner", "repo", "path", "content", "message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "restore_file",
+            "description": (
+                "Undo changes to a file: put it back exactly as it was at an earlier commit, "
+                "copying its bytes from the repository's history. Use this for any revert, undo, "
+                "rollback, or 'restore to how it was' request — never retype old content with "
+                "create_or_update_file. Find the commit to restore from in earlier results (e.g. "
+                "list_commits for that path). This modifies the repository."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "owner": _prop(),
+                    "repo": _prop(),
+                    "path": _prop(description="File path to restore"),
+                    "ref": _prop(description="Commit SHA (or tag/branch) whose version of the file to restore"),
+                    "message": _prop(description="Commit message"),
+                    "branch": _prop(description="Branch to commit to; defaults to the default branch"),
+                },
+                "required": ["owner", "repo", "path", "ref", "message"],
             },
         },
     },

@@ -29,6 +29,7 @@ _overviews: dict[tuple, dict] = {}
 TREE_CHANGING_TOOLS = {
     "edit_file",
     "create_or_update_file",
+    "restore_file",
     "delete_file",
     "create_branch",
     "delete_branch",

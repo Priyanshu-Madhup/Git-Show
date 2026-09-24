@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import logo from './assets/logo.png'
+import RepoPicker from './RepoPicker.jsx'
 import './App.css'
 
 const EXAMPLE_QUERIES = [
@@ -693,11 +694,9 @@ function App() {
     }
   }
 
-  const repoOptions = repos.map((r) => (
-    <option key={r.full_name} value={r.full_name}>
-      {r.full_name}
-    </option>
-  ))
+  // On the home screen the picker sits in the chat input; once a chat starts
+  // it docks in the top bar (see the dock animation above).
+  const showInlinePicker = !hasStarted && !!user && repos.length > 0
 
   return (
     <div className="page">
@@ -804,16 +803,14 @@ function App() {
           </button>
           <div className="topbar-right">
             {hasStarted && user && repos.length > 0 && (
-              <select
+              <RepoPicker
                 ref={repoPickerRef}
-                className="repo-picker"
+                repos={repos}
                 value={selectedRepo}
-                onChange={(e) => setSelectedRepo(e.target.value)}
-                title="Repository the assistant will act on"
-              >
-                <option value="">Choose a repository…</option>
-                {repoOptions}
-              </select>
+                onChange={setSelectedRepo}
+                variant="topbar"
+                align="right"
+              />
             )}
             {user ? (
               <button
@@ -946,22 +943,10 @@ function App() {
           )}
 
           <form className={`search ${hasStarted ? 'search-docked' : ''}`} onSubmit={handleSubmit}>
-            {!hasStarted && user && repos.length > 0 && (
-              <select
-                ref={repoPickerRef}
-                className="repo-picker repo-picker-hero"
-                value={selectedRepo}
-                onChange={(e) => setSelectedRepo(e.target.value)}
-                title="Repository the assistant will act on"
-              >
-                <option value="">Choose a repository…</option>
-                {repoOptions}
-              </select>
-            )}
             <label className="sr-only" htmlFor="query">
               Ask your query
             </label>
-            <div className="search-field" ref={searchFieldRef}>
+            <div className={`search-field ${showInlinePicker ? 'search-field-has-picker' : ''}`} ref={searchFieldRef}>
               <svg
                 className="search-icon"
                 width="18"
@@ -989,6 +974,16 @@ function App() {
                 rows={hasStarted ? 1 : 3}
                 disabled={!user}
               />
+              {showInlinePicker && (
+                <RepoPicker
+                  ref={repoPickerRef}
+                  repos={repos}
+                  value={selectedRepo}
+                  onChange={setSelectedRepo}
+                  variant="inline"
+                  align="left"
+                />
+              )}
               {authChecked && !user ? (
                 <a className="auth-btn search-signin" href="/api/auth/github/login">
                   <GitHubMark />

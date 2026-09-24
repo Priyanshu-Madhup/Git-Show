@@ -29,6 +29,7 @@ log = logging.getLogger("gitshow.runtime")
 
 WRITE_LABELS = {
     "edit_file": lambda a: f"Committing an edit to {a.get('path')}",
+    "restore_file": lambda a: f"Restoring {a.get('path')} from {str(a.get('ref', ''))[:7]}",
     "create_or_update_file": lambda a: f"Writing {a.get('path')}",
     "delete_file": lambda a: f"Deleting {a.get('path')}",
     "create_branch": lambda a: f"Creating branch {a.get('branch')}",
@@ -41,6 +42,7 @@ WRITE_LABELS = {
 
 DONE_LABELS = {
     "edit_file": lambda a: f"edited `{a.get('path')}`",
+    "restore_file": lambda a: f"restored `{a.get('path')}` to its version at `{str(a.get('ref', ''))[:7]}`",
     "create_or_update_file": lambda a: f"wrote `{a.get('path')}`",
     "delete_file": lambda a: f"deleted `{a.get('path')}`",
     "create_branch": lambda a: f"created branch **{a.get('branch')}**",
