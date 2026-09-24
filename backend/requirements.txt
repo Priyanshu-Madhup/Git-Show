@@ -5,3 +5,7 @@ openai==1.109.1
 pydantic==2.10.3
 requests==2.32.3
 ddgs==9.16.0
+psycopg[binary]==3.3.6
+psycopg-pool==3.3.3
+cryptography==50.0.1
+sqlglot==30.19.0
