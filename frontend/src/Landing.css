@@ -1,0 +1,821 @@
+.landing {
+  --planner: #c9a6ff;
+  --reader: #7cc7ff;
+  --writer: #ffc36b;
+  --memory: #ff9ecf;
+  --gutter: clamp(1.25rem, 5vw, 4.5rem);
+  position: relative;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-white);
+  font-family: var(--font-sans);
+  overflow-x: clip;
+}
+
+.landing-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  display: block;
+}
+
+/* Keeps text legible over the graph: darker on the left where copy sits. */
+.landing-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(5, 7, 6, 0.92) 0%, rgba(5, 7, 6, 0.55) 38%, rgba(5, 7, 6, 0) 68%),
+    radial-gradient(ellipse 120% 90% at 70% 50%, transparent 55%, rgba(5, 7, 6, 0.8) 100%);
+}
+
+/* During the story the graph moves left, so only the edges are darkened. */
+.landing-vignette {
+  transition: opacity 0.8s ease;
+}
+
+.landing-vignette-story {
+  opacity: 0;
+  background: radial-gradient(ellipse 110% 95% at 45% 50%, transparent 50%, rgba(5, 7, 6, 0.85) 100%);
+}
+
+.landing-in-story .landing-vignette {
+  opacity: 0;
+}
+
+.landing-in-story .landing-vignette-story {
+  opacity: 1;
+}
+
+.landing-no-graph .landing-vignette {
+  background:
+    radial-gradient(ellipse 60% 50% at 75% 45%, rgba(52, 229, 143, 0.12), transparent 70%),
+    var(--color-bg);
+}
+
+.landing main,
+.landing-footer {
+  position: relative;
+  z-index: 2;
+}
+
+/* --- nav ------------------------------------------------------------------- */
+
+.landing-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(env(safe-area-inset-top, 0px) + 1.1rem) var(--gutter) 1.1rem;
+}
+
+.landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--color-white);
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 450;
+}
+
+.landing-brand img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.landing-nav-cta {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-white);
+  text-decoration: none;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-hairline);
+  background: rgba(5, 7, 6, 0.4);
+  backdrop-filter: blur(8px);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.landing-nav-cta:hover {
+  border-color: rgba(139, 255, 206, 0.55);
+  background: var(--color-green-dim);
+}
+
+/* --- hero ------------------------------------------------------------------- */
+
+.landing-hero {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 7rem var(--gutter) 5rem;
+}
+
+.landing-headline {
+  margin: 0;
+  max-width: 10.5ch;
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(3.1rem, 9.2vw, 8.75rem);
+  line-height: 0.94;
+  letter-spacing: -0.025em;
+  color: var(--color-white);
+}
+
+/* Each character prints in turn: the page's one orchestrated entrance. */
+.landing-word {
+  display: inline-block;
+  white-space: nowrap;
+  margin-right: 0.24em;
+}
+
+.landing-word:last-child {
+  margin-right: 0;
+}
+
+.landing-char {
+  display: inline-block;
+  opacity: 0;
+  animation: landing-print 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes landing-print {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(0.2em);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+/* A full text cursor: from the top of the tall letters (h, t) down to the
+   bottom of the tails (y, g). Measured from Fraunces at this weight — the
+   ascenders reach 0.736em above the baseline, the descenders 0.25em below. */
+.landing-caret {
+  display: inline-block;
+  width: 0.055em;
+  height: 0.986em;
+  margin-left: 0.06em;
+  background: var(--color-green);
+  vertical-align: -0.25em;
+  animation: landing-blink 1.05s steps(1) infinite;
+}
+
+@keyframes landing-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.landing-lede {
+  max-width: 33rem;
+  margin: 2rem 0 0;
+  font-size: clamp(1rem, 1.3vw, 1.15rem);
+  line-height: 1.65;
+  color: #c5d2ca;
+  opacity: 0;
+  animation: landing-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) 2.2s forwards;
+}
+
+.landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 2.2rem;
+  opacity: 0;
+  animation: landing-rise 0.8s cubic-bezier(0.22, 1, 0.36, 1) 2.45s forwards;
+}
+
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.landing-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.85rem 1.55rem;
+  border-radius: 999px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.landing-btn-primary {
+  border: none;
+  background: var(--color-green);
+  color: #04150c;
+  box-shadow: 0 10px 30px -12px rgba(52, 229, 143, 0.6);
+}
+
+.landing-btn-primary:hover {
+  background: var(--color-green-bright);
+  transform: translateY(-1px);
+}
+
+.landing-btn-quiet {
+  border: 1px solid var(--color-hairline);
+  background: rgba(5, 7, 6, 0.35);
+  color: var(--color-white);
+  backdrop-filter: blur(6px);
+}
+
+.landing-btn-quiet:hover {
+  border-color: rgba(139, 255, 206, 0.5);
+}
+
+/* --- scroll story -------------------------------------------------------------- */
+
+.landing-story {
+  position: relative;
+}
+
+.story-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100svh;
+  display: grid;
+  grid-template-columns: auto minmax(0, 36rem);
+  align-items: center;
+  gap: clamp(1.5rem, 4vw, 4rem);
+  padding: 5rem var(--gutter) 3rem;
+}
+
+.story-rail ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  position: relative;
+}
+
+.story-rail ol::before {
+  content: '';
+  position: absolute;
+  left: 4.5px;
+  top: 0.6rem;
+  bottom: 0.6rem;
+  width: 1px;
+  background: var(--color-hairline);
+}
+
+.story-rail-step {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: color 0.3s ease;
+}
+
+.story-rail-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-hairline);
+  background: var(--color-bg);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.story-rail-step.is-past .story-rail-dot {
+  background: rgba(52, 229, 143, 0.5);
+  border-color: rgba(52, 229, 143, 0.5);
+}
+
+.story-rail-step.is-active {
+  color: var(--color-white);
+}
+
+.story-rail-step.is-active .story-rail-dot {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  box-shadow: 0 0 0 4px rgba(52, 229, 143, 0.18);
+}
+
+.story-rail-step:hover {
+  color: var(--color-white);
+}
+
+.story-stages {
+  position: relative;
+  height: min(34rem, 72vh);
+  perspective: 1400px;
+}
+
+/* Stages swing in and out on a 3D hinge as you scroll between them. */
+.story-stage {
+  position: absolute;
+  inset: 0 0 auto 0;
+  padding: clamp(1.4rem, 3vw, 2.2rem);
+  border: 1px solid var(--color-hairline);
+  border-radius: 20px;
+  background: rgba(8, 12, 10, 0.72);
+  backdrop-filter: blur(12px);
+  transform-origin: 50% 50% -200px;
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.story-stage.is-next {
+  opacity: 0;
+  transform: translateY(70px) rotateX(-22deg);
+  pointer-events: none;
+}
+
+.story-stage.is-past {
+  opacity: 0;
+  transform: translateY(-70px) rotateX(22deg);
+  pointer-events: none;
+}
+
+.story-stage.is-active {
+  opacity: 1;
+  transform: none;
+}
+
+.story-stage h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 350;
+  font-size: clamp(1.8rem, 3.2vw, 2.7rem);
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+
+.story-body {
+  margin: 0.9rem 0 0;
+  max-width: 34rem;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  color: #c5d2ca;
+}
+
+/* --- printed transcript ----------------------------------------------------------- */
+
+.transcript {
+  margin-top: 1.4rem;
+  padding-top: 1.2rem;
+  border-top: 1px dashed var(--color-hairline);
+  min-height: 9.5rem;
+}
+
+.transcript-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.transcript-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--color-white);
+}
+
+.transcript-you .transcript-text {
+  color: var(--color-green-bright);
+}
+
+.transcript-diff {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  white-space: pre;
+}
+
+.transcript-add {
+  background: rgba(52, 229, 143, 0.12);
+  color: #b8ffdc;
+}
+
+.transcript-del {
+  background: rgba(255, 110, 110, 0.12);
+  color: #ffc2c2;
+}
+
+.transcript-caret {
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--color-green);
+  animation: landing-blink 0.9s steps(1) infinite;
+}
+
+.landing .agent-badge {
+  flex-shrink: 0;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  line-height: 1.3;
+}
+
+.landing .agent-you {
+  color: var(--color-green);
+}
+.landing .agent-orchestrator {
+  color: #b9c7bf;
+}
+.landing .agent-planner {
+  color: var(--planner);
+}
+.landing .agent-reader {
+  color: var(--reader);
+}
+.landing .agent-writer {
+  color: var(--writer);
+}
+.landing .agent-verifier {
+  color: #6bf0d9;
+}
+.landing .agent-memory {
+  color: var(--memory);
+}
+
+/* --- close ---------------------------------------------------------------------- */
+
+.landing-close {
+  min-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 6rem var(--gutter);
+}
+
+.landing-close h2 {
+  margin: 0;
+  max-width: 12ch;
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(2.6rem, 6.5vw, 5.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.02em;
+}
+
+.landing-close p {
+  max-width: 32rem;
+  margin: 1.5rem 0 2rem;
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: #c5d2ca;
+}
+
+.landing-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 1.5rem);
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  border-top: 1px solid rgba(120, 220, 170, 0.1);
+}
+
+.landing-footer a {
+  color: var(--color-muted);
+}
+
+.landing-footer a:hover {
+  color: var(--color-white);
+}
+
+.landing .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- small screens: rail on top, stage card below the graph ------------------------- */
+
+@media (max-width: 760px) {
+  .landing-vignette {
+    background: linear-gradient(180deg, rgba(5, 7, 6, 0.2) 0%, rgba(5, 7, 6, 0.55) 45%, rgba(5, 7, 6, 0.92) 100%);
+  }
+
+  .landing-hero {
+    justify-content: flex-end;
+    padding-bottom: 4.5rem;
+  }
+
+  .story-sticky {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    align-items: end;
+    gap: 1rem;
+    padding-top: 4.5rem;
+    padding-bottom: 1.25rem;
+  }
+
+  .story-rail ol {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+  }
+
+  .story-rail ol::before {
+    display: none;
+  }
+
+  .story-stages {
+    height: min(31rem, 68svh);
+  }
+
+  .story-stage {
+    inset: auto 0 0 0;
+  }
+
+  .transcript-line {
+    font-size: 0.8rem;
+  }
+
+  .transcript-diff {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-char,
+  .landing-lede,
+  .landing-actions {
+    animation: none;
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+
+  .landing-caret,
+  .transcript-caret {
+    animation: none;
+  }
+
+  .story-stage {
+    transition: opacity 0.2s linear;
+  }
+
+  .story-stage.is-next,
+  .story-stage.is-past {
+    transform: none;
+  }
+}
+
+/* --- agent tree ------------------------------------------------------------------ */
+
+.landing-agents {
+  padding: 8rem var(--gutter) 4rem;
+}
+
+.landing-agents-inner {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 3rem);
+  border: 1px solid var(--color-hairline);
+  border-radius: 28px;
+  background: rgba(7, 10, 8, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.landing-agents h2 {
+  margin: 0;
+  max-width: 18ch;
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.landing-agents-intro {
+  max-width: 38rem;
+  margin: 1.1rem 0 0;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: #c5d2ca;
+}
+
+.agent-tree {
+  margin-top: clamp(1.5rem, 4vw, 3rem);
+}
+
+.agent-tree-stage {
+  position: relative;
+  width: 100%;
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.agent-tree-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.agent-edge-line {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-opacity: 0.45;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-opacity 0.35s ease, stroke-width 0.35s ease;
+}
+
+.agent-edge-line.is-dashed {
+  stroke-dasharray: 0.014 0.012;
+  stroke-dashoffset: 0;
+  opacity: 0;
+}
+
+.agent-tree.is-visible .agent-edge-line {
+  animation: agent-draw 1.1s cubic-bezier(0.65, 0, 0.35, 1) var(--delay, 0s) forwards;
+}
+
+.agent-tree.is-visible .agent-edge-line.is-dashed {
+  animation: agent-fade 0.8s ease var(--delay, 0s) forwards;
+}
+
+@keyframes agent-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes agent-fade {
+  to {
+    opacity: 1;
+  }
+}
+
+.agent-edge.is-active .agent-edge-line {
+  stroke-opacity: 0.95;
+  stroke-width: 2.6;
+}
+
+.agent-edge-label {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  fill: var(--color-muted);
+  opacity: 0;
+  transition: fill 0.35s ease;
+}
+
+.agent-tree.is-visible .agent-edge-label {
+  animation: agent-fade 0.6s ease var(--delay, 0s) forwards;
+}
+
+.agent-edge.is-active .agent-edge-label {
+  fill: var(--color-white);
+}
+
+.agent-pulse-glow {
+  opacity: 0.8;
+}
+
+.agent-node {
+  position: absolute;
+  z-index: 1;
+  width: clamp(9.5rem, 24%, 14.5rem);
+  transform: translate(-50%, -50%) scale(0.85);
+  opacity: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.7rem 0.9rem;
+  text-align: center;
+  border: 1px solid color-mix(in srgb, var(--agent) 45%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--agent) 8%, #070a08);
+  box-shadow: 0 0 0 0 transparent;
+  transition: border-color 0.35s ease, box-shadow 0.35s ease, background 0.35s ease;
+}
+
+.agent-tree.is-visible .agent-node {
+  animation: agent-node-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) var(--delay, 0s) forwards;
+}
+
+@keyframes agent-node-in {
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.agent-node.is-active {
+  border-color: var(--agent);
+  background: color-mix(in srgb, var(--agent) 16%, #070a08);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent) 18%, transparent), 0 0 40px -6px var(--agent);
+}
+
+.agent-node-name {
+  font-family: var(--font-display);
+  font-size: clamp(1rem, 1.6vw, 1.2rem);
+  font-weight: 450;
+  color: var(--agent);
+}
+
+.agent-node-role {
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: #b4c2ba;
+}
+
+.agent-tree-caption {
+  min-height: 3em;
+  max-width: 40rem;
+  margin: 1.5rem auto 0;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--color-white);
+}
+
+.agent-tree.is-still .agent-edge-line,
+.agent-tree.is-still .agent-edge-label,
+.agent-tree.is-still .agent-node {
+  animation: none;
+  opacity: 1;
+  stroke-dashoffset: 0;
+}
+
+.agent-tree.is-still .agent-node {
+  transform: translate(-50%, -50%);
+}
+
+@media (max-width: 759px) {
+  .landing-agents {
+    padding-top: 5rem;
+  }
+
+  .agent-node {
+    width: 44%;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .agent-node-orchestrator,
+  .agent-node-planner {
+    width: 58%;
+  }
+
+  .agent-node-role {
+    font-size: 0.7rem;
+  }
+
+  .agent-edge-label {
+    font-size: 12px;
+  }
+}

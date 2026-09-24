@@ -1545,3 +1545,30 @@
 .hint-link:hover {
   color: var(--color-green-bright);
 }
+
+/* Signed out: the chat is visible but can't be used until sign-in. */
+.search-field textarea:disabled {
+  cursor: not-allowed;
+}
+
+.search-field textarea:disabled::placeholder {
+  color: var(--color-muted);
+}
+
+.search-signin {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 0.5rem 0.95rem;
+  font-size: 0.82rem;
+}
+
+.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.chip:disabled:hover {
+  color: var(--color-muted);
+  background: rgba(52, 229, 143, 0.05);
+  border-color: var(--color-hairline);
+}

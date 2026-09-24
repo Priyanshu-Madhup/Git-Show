@@ -329,6 +329,7 @@ function App() {
   const [liveTimeline, setLiveTimeline] = useState([])
   const [livePlan, setLivePlan] = useState(null)
   const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [repos, setRepos] = useState([])
   const [selectedRepo, setSelectedRepo] = useState('')
   // Whose repo list is loaded, so "no repos yet" isn't mistaken for "still loading".
@@ -340,6 +341,7 @@ function App() {
       .then((res) => (res.ok ? res.json() : null))
       .then(setUser)
       .catch(() => setUser(null))
+      .finally(() => setAuthChecked(true))
     fetch('/api/config')
       .then((res) => (res.ok ? res.json() : {}))
       .then((config) => setInstallUrl(config.install_url || null))
@@ -664,7 +666,7 @@ function App() {
 
   const sendMessage = async (text) => {
     const trimmed = text.trim()
-    if (!trimmed || isSending || isStreaming) return
+    if (!trimmed || !user || isSending || isStreaming) return
 
     if (!hasStarted) {
       flipFromRect.current = searchFieldRef.current.getBoundingClientRect()
@@ -977,14 +979,27 @@ function App() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask your query  . . ."
+                placeholder={
+                  user
+                    ? 'Ask your query  . . .'
+                    : authChecked
+                      ? 'Sign in with GitHub to ask about your repositories'
+                      : 'Checking your sign-in…'
+                }
                 rows={hasStarted ? 1 : 3}
+                disabled={!user}
               />
+              {authChecked && !user ? (
+                <a className="auth-btn search-signin" href="/api/auth/github/login">
+                  <GitHubMark />
+                  Sign in
+                </a>
+              ) : (
               <button
                 className="submit-btn"
                 type="submit"
                 aria-label="Ask"
-                disabled={isSending || isStreaming || !query.trim()}
+                disabled={!user || isSending || isStreaming || !query.trim()}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
@@ -996,6 +1011,7 @@ function App() {
                   />
                 </svg>
               </button>
+              )}
             </div>
 
             <div className={`chips-wrap ${hasStarted ? 'intro-hidden' : ''}`}>
@@ -1006,13 +1022,18 @@ function App() {
                     type="button"
                     className="chip"
                     onClick={() => setQuery(example)}
+                    disabled={!user}
                   >
                     {example}
                   </button>
                 ))}
               </div>
 
-              <p className="hint">Press Enter to ask, Shift-Enter for a new line</p>
+              <p className="hint">
+                {user || !authChecked
+                  ? 'Press Enter to ask, Shift-Enter for a new line'
+                  : 'Sign in with GitHub to start — Git Show only sees the repositories you allow'}
+              </p>
               {user && installUrl && repos.length > 0 && (
                 <p className="hint">
                   Missing a repository? <a className="hint-link" href={installUrl}>Manage repository access</a>

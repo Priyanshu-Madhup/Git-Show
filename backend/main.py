@@ -29,6 +29,8 @@ GITHUB_CALLBACK_URL = os.getenv(
     "GITHUB_CALLBACK_URL", "http://localhost:5173/api/auth/github/callback"
 )
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# "/" is the landing page; signing in or installing returns people to the chat.
+APP_URL = FRONTEND_URL.rstrip("/") + "/app"
 
 # Everything below is optional and defaults to the local dev setup (Vite on
 # :5173 proxying /api to this server), so a local run needs none of it.
@@ -180,7 +182,7 @@ def github_callback(
         # Back from installing (or changing) the App without a sign-in code,
         # e.g. "Request user authorization during installation" is off:
         # sign in normally, which is instant once the App is authorized.
-        return RedirectResponse("/api/auth/github/login" if setup_action else FRONTEND_URL)
+        return RedirectResponse("/api/auth/github/login" if setup_action else APP_URL)
     if not state or state != oauth_state:
         if setup_action:
             # Installed from github.com directly rather than through our
@@ -230,7 +232,7 @@ def github_callback(
         expires_in=token_data.get("expires_in"),
     )
 
-    response = RedirectResponse(FRONTEND_URL)
+    response = RedirectResponse(APP_URL)
     response.delete_cookie("oauth_state")
     _set_cookie(response, "session_id", session_id, int(db.SESSION_TTL.total_seconds()))
     return response
@@ -299,7 +301,7 @@ def chat(payload: ChatRequest, session_id: str | None = Cookie(default=None)):
     _require_llm()
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="Message is empty.")
-    session = get_session(session_id)
+    session = _require_session(session_id)
     return StreamingResponse(
         orchestrator.start(message=payload.message, chat_id=payload.chat_id, repo=payload.repo, session=session),
         media_type=NDJSON,
