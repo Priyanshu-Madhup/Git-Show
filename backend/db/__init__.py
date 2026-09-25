@@ -281,7 +281,7 @@ def get_conversation(conversation_id, user_id) -> dict | None:
     confirmed; otherwise action_state says what became of them."""
     with connection() as conn:
         conv = conn.execute(
-            "select id, title, repo from conversations where id = %s and user_id = %s",
+            "select id, title, repo, widgets from conversations where id = %s and user_id = %s",
             (conversation_id, user_id),
         ).fetchone()
         if not conv:
@@ -318,7 +318,62 @@ def get_conversation(conversation_id, user_id) -> dict | None:
             else:
                 message["action_state"] = "expired" if action_status == "pending" else action_status
         messages.append(message)
-    return {"id": str(conv[0]), "title": conv[1] or "New chat", "repo": conv[2], "messages": messages}
+    return {
+        "id": str(conv[0]),
+        "title": conv[1] or "New chat",
+        "repo": conv[2],
+        "widgets": conv[3],
+        "messages": messages,
+    }
+
+
+# Argument keys worth showing when listing a change; file contents and the
+# like are left out.
+CHANGE_ARGUMENT_KEYS = (
+    "path", "branch", "from_branch", "title", "pull_number", "issue_number", "tag_name", "name", "head", "base",
+)
+
+
+def list_executed_actions(conversation_id, user_id, limit=30) -> list[dict]:
+    """The changes confirmed and made in a chat, newest first."""
+    with connection() as conn:
+        rows = conn.execute(
+            """
+            select p.tool, p.arguments, p.result, p.resolved_at
+            from pending_actions p
+            join conversations c on c.id = p.conversation_id
+            where p.conversation_id = %s and c.user_id = %s and p.status = 'executed'
+            order by p.resolved_at desc nulls last
+            limit %s
+            """,
+            (conversation_id, user_id, limit),
+        ).fetchall()
+    changes = []
+    for tool, arguments, result, resolved_at in rows:
+        arguments = arguments or {}
+        result = result if isinstance(result, dict) else {}
+        url = result.get("html_url") or result.get("url")
+        changes.append(
+            {
+                "tool": tool,
+                "repo": f"{arguments.get('owner')}/{arguments.get('repo')}" if arguments.get("owner") else None,
+                "details": {k: arguments[k] for k in CHANGE_ARGUMENT_KEYS if arguments.get(k) not in (None, "")},
+                "url": url if isinstance(url, str) and url.startswith("https://github.com/") else None,
+                "at": resolved_at.isoformat() if resolved_at else None,
+            }
+        )
+    return changes
+
+
+def set_conversation_widgets(conversation_id, user_id, widgets) -> bool:
+    """Save which repository-panel widgets a chat shows. The chat may not be
+    stored yet (its first message is still being written), so it's claimed
+    first, exactly as adding a message would."""
+    with connection() as conn:
+        if not claim_conversation(conn, conversation_id, user_id):
+            return False
+        conn.execute("update conversations set widgets = %s where id = %s", (widgets, conversation_id))
+    return True
 
 
 def delete_conversation(conversation_id, user_id) -> bool:

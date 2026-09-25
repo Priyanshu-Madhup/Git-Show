@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import logo from './assets/logo.png'
 import RepoPicker from './RepoPicker.jsx'
+import RepoPanel from './RepoPanel.jsx'
+import { formatRelativeTime } from './time.js'
+import WidgetPicker from './WidgetPicker.jsx'
+import { DEFAULT_WIDGETS, isDefaultLayout, useMediaQuery, useWidgetLayout } from './widgetLayout.js'
 import './App.css'
 
 const EXAMPLE_QUERIES = [
@@ -182,18 +186,6 @@ const ActionCard = ({ action, disabled, onConfirm, onCancel }) => {
   )
 }
 
-const formatRelativeTime = (iso) => {
-  const seconds = (Date.now() - new Date(iso).getTime()) / 1000
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
-
 const escapeHtml = (text) =>
   text
     .replace(/&/g, '&amp;')
@@ -336,6 +328,17 @@ function App() {
   // Whose repo list is loaded, so "no repos yet" isn't mistaken for "still loading".
   const [reposLoadedFor, setReposLoadedFor] = useState(null)
   const [installUrl, setInstallUrl] = useState(null)
+  // The repository panel's drawer (narrow screens only; wide ones dock it),
+  // and a counter that makes it refetch after a confirmed write.
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelRefresh, setPanelRefresh] = useState(0)
+  const [widgetLayout, setWidgetLayout, resetWidgetLayout] = useWidgetLayout()
+  const widgetsMovable = useMediaQuery('(min-width: 1200px)')
+  // Which widgets this chat shows (null: the defaults), saved with the chat.
+  const [chatWidgets, setChatWidgets] = useState(null)
+  const [widgetPickerOpen, setWidgetPickerOpen] = useState(false)
+  const [widgetSaveState, setWidgetSaveState] = useState(null)
+  const widgetSaveSeq = useRef(0)
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -376,13 +379,16 @@ function App() {
   }, [user, loadConversations])
 
   useEffect(() => {
-    if (!sidebarOpen) return
+    if (!sidebarOpen && !panelOpen) return
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') setSidebarOpen(false)
+      if (e.key === 'Escape') {
+        setSidebarOpen(false)
+        setPanelOpen(false)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [sidebarOpen])
+  }, [sidebarOpen, panelOpen])
 
   const searchFieldRef = useRef(null)
   const flipFromRect = useRef(null)
@@ -408,6 +414,8 @@ function App() {
     setQuery('')
     setHasStarted(false)
     setSidebarOpen(false)
+    setPanelOpen(false)
+    setChatWidgets(null)
   }
 
   const openConversation = async (id) => {
@@ -433,6 +441,7 @@ function App() {
         })),
       )
       setSelectedRepo(repos.some((r) => r.full_name === data.repo) ? data.repo : '')
+      setChatWidgets(data.widgets || null)
       setHasStarted(true)
     } catch {
       loadConversations()
@@ -568,6 +577,7 @@ function App() {
         runId: final.run_id || null,
       })
       if (user) loadConversations()
+      if (url === '/api/github/actions/execute') setPanelRefresh((n) => n + 1)
     } catch (err) {
       setIsSending(false)
       setLiveTimeline([])
@@ -698,6 +708,36 @@ function App() {
   // it docks in the top bar (see the dock animation above).
   const showInlinePicker = !hasStarted && !!user && repos.length > 0
 
+  // The repository panel appears once a repository is chosen and the chat
+  // has its first message, and follows the picker from then on. It shows the
+  // widgets chosen for this chat, and nothing at all if every one is off.
+  const repoChat = hasStarted && user && selectedRepo && messages.some((m) => m.role === 'user')
+  const visibleWidgets = chatWidgets ?? DEFAULT_WIDGETS
+  // The plan being worked on now, or else the chat's most recent one.
+  const currentPlan = livePlan || [...messages].reverse().find((m) => m.plan?.steps?.length)?.plan || null
+  const askFromPanel = (text) => {
+    setQuery(text)
+    textareaRef.current?.focus()
+  }
+  const panelRepo = repoChat && visibleWidgets.length > 0 ? selectedRepo : ''
+
+  const saveChatWidgets = async (widgets) => {
+    setChatWidgets(widgets)
+    setWidgetSaveState('saving')
+    const seq = ++widgetSaveSeq.current
+    try {
+      const res = await fetch(`/api/conversations/${chatId}/widgets`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ widgets }),
+      })
+      if (seq === widgetSaveSeq.current) setWidgetSaveState(res.ok ? 'saved' : 'failed')
+    } catch {
+      if (seq === widgetSaveSeq.current) setWidgetSaveState('failed')
+    }
+  }
+
   return (
     <div className="page">
       <div className={`frame ${hasStarted ? 'frame-chat' : ''}`}>
@@ -802,6 +842,41 @@ function App() {
             <span />
           </button>
           <div className="topbar-right">
+            {repoChat && (
+              <button
+                type="button"
+                className="icon-btn panel-toggle panel-widgets"
+                aria-label="Choose widgets"
+                aria-haspopup="dialog"
+                onClick={() => {
+                  setWidgetSaveState(null)
+                  setWidgetPickerOpen(true)
+                }}
+                title="Choose widgets for this chat"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+                </svg>
+              </button>
+            )}
+            {panelRepo && (
+              <button
+                type="button"
+                className="icon-btn panel-toggle"
+                aria-label="Repository panel"
+                aria-expanded={panelOpen}
+                onClick={() => setPanelOpen((v) => !v)}
+                title="Project tree, commits, and summary"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M14.5 4.5V19.5" stroke="currentColor" strokeWidth="1.6" />
+                </svg>
+              </button>
+            )}
             {hasStarted && user && repos.length > 0 && (
               <RepoPicker
                 ref={repoPickerRef}
@@ -830,8 +905,35 @@ function App() {
           </div>
         </header>
 
-        <main className={`hero ${hasStarted ? 'hero-chat' : ''}`}>
+        <main className={`hero ${hasStarted ? 'hero-chat' : ''} ${panelRepo ? 'hero-panelled' : ''}`}>
           <div className="glow" aria-hidden="true" />
+
+          {panelRepo && (
+            <RepoPanel
+              key={panelRepo}
+              repo={panelRepo}
+              refreshKey={panelRefresh}
+              open={panelOpen}
+              onClose={() => setPanelOpen(false)}
+              layout={widgetLayout}
+              setLayout={setWidgetLayout}
+              visible={visibleWidgets}
+              chatId={chatId}
+              plan={currentPlan}
+              planLive={!!livePlan}
+              onAsk={askFromPanel}
+            />
+          )}
+          {widgetPickerOpen && repoChat && (
+            <WidgetPicker
+              visible={visibleWidgets}
+              onChange={saveChatWidgets}
+              saveState={widgetSaveState}
+              canResetPositions={widgetsMovable && !isDefaultLayout(widgetLayout, visibleWidgets)}
+              onResetPositions={resetWidgetLayout}
+              onClose={() => setWidgetPickerOpen(false)}
+            />
+          )}
 
           <div className={`intro ${hasStarted ? 'intro-hidden' : ''}`}>
             <div className="brand">

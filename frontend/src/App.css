@@ -618,6 +618,32 @@
   scrollbar-color: var(--color-hairline) transparent;
 }
 
+/* In a chat, the scroll area spans the whole window, out past the frame's
+   right padding, so its scrollbar sits at the far right edge (behind the
+   repository cards, which float above it). Its content box stays exactly
+   the hero's width, so the chat column lines up with the docked input. */
+.hero-chat {
+  --chat-w: min(980px, 92%);
+}
+
+.hero-chat .messages {
+  align-self: flex-start;
+  width: calc(100% + var(--frame-pad));
+  margin-right: calc(-1 * var(--frame-pad));
+  /* The thin scrollbar (10px in Chromium) takes the last strip of the
+     padding, not the content. */
+  padding-inline: 0 calc(var(--frame-pad) - 10px);
+  scrollbar-gutter: stable;
+}
+
+.hero-chat .messages-inner {
+  width: var(--chat-w);
+}
+
+.hero-chat .search-docked {
+  width: var(--chat-w);
+}
+
 .messages::-webkit-scrollbar {
   width: 6px;
 }
@@ -1755,5 +1781,1108 @@
 
   .repo-picker-topbar .repo-picker-trigger {
     max-width: 9rem;
+  }
+}
+
+/* --- Repository panel -------------------------------------------------------
+   Once a chat has a repository and a first message, its widgets float as
+   cards in the main window: branches, pull requests, and contributors in a
+   slightly narrower left gutter; the file tree, commits, and summary on the
+   right. The chat sits between them. Below 1200px there's no room for both
+   gutters, so the cards wait behind a top-bar button and float over the
+   chat as one list when opened. */
+
+.hero-panelled {
+  --panel-w: clamp(250px, 21vw, 400px);
+  --panel-left-w: clamp(220px, 17vw, 330px);
+  --panel-gap: 1.25rem;
+}
+
+.panel-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--color-green);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.panel-toggle:hover,
+.panel-toggle[aria-expanded="true"] {
+  color: var(--color-green-bright);
+  background: var(--color-green-dim);
+}
+
+.repo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 0;
+}
+
+.repo-panel-head {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.95rem;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 12px;
+}
+
+.repo-panel-name {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 480;
+  color: var(--color-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-panel-backdrop {
+  display: none;
+}
+
+/* With the cards showing, replies may use the chat column's full width. */
+.hero-panelled .bubble-assistant {
+  max-width: 100%;
+}
+
+@media (min-width: 1200px) {
+  /* The chat fills the space between the two columns (one --panel-gap from
+     each), capped for readability on very wide screens. */
+  .hero-panelled {
+    --chat-avail: calc(100% - var(--panel-left-w) - var(--panel-w) - 2 * var(--panel-gap));
+    --chat-w: min(1100px, var(--chat-avail));
+    --chat-x: calc(var(--panel-left-w) + var(--panel-gap) + (var(--chat-avail) - var(--chat-w)) / 2);
+  }
+
+  .hero-panelled .messages-inner {
+    align-self: flex-start;
+    margin-left: var(--chat-x);
+  }
+
+  .hero-panelled .search-docked {
+    left: calc(var(--chat-x) + var(--chat-w) / 2);
+  }
+
+  .repo-panels {
+    display: contents;
+  }
+
+  .repo-panel {
+    position: absolute;
+    z-index: 3;
+    top: 0.25rem;
+    bottom: 1.25rem;
+    animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .repo-panel-left {
+    left: 0;
+    width: var(--panel-left-w);
+  }
+
+  .repo-panel-right {
+    right: 0;
+    width: var(--panel-w);
+  }
+}
+
+@media (max-width: 1199px) {
+  .panel-toggle {
+    display: flex;
+  }
+
+  /* Invisible, just catches a click outside the cards to close them. */
+  .repo-panel-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+  }
+
+  .repo-panel-backdrop-open {
+    display: block;
+  }
+
+  .repo-panels {
+    display: none;
+    position: absolute;
+    z-index: 10;
+    top: 0.25rem;
+    right: 0;
+    bottom: 1.25rem;
+    width: min(380px, 100%);
+    flex-direction: column;
+    gap: 0.85rem;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-hairline) transparent;
+    animation: rise-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .repo-panels-open {
+    display: flex;
+  }
+
+  .repo-panel-head {
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  /* One list: what the repo is first, then its activity. */
+  .repo-panel-right {
+    order: 1;
+  }
+
+  .repo-panel-left {
+    order: 2;
+  }
+
+  .repo-panel {
+    flex-shrink: 0;
+  }
+
+  .repo-panel .widget {
+    flex: none;
+    max-height: 340px;
+    background: var(--color-bg-raised);
+  }
+}
+
+.widget {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  padding: 0.85rem 0.95rem;
+  background: rgba(10, 15, 12, 0.72);
+  border: 1px solid var(--color-hairline);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 40px -22px rgba(0, 0, 0, 0.9);
+  transition: border-color 0.2s ease;
+}
+
+/* Movable widgets (wide screens): drag by the header. */
+.repo-panels-movable .widget-head {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.repo-panels-dragging,
+.repo-panels-dragging .widget-head {
+  cursor: grabbing;
+}
+
+.widget-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 14px;
+}
+
+.widget-slot > .widget,
+.widget-float > .widget {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* A faint mark where a widget can go back. */
+.widget-slot-empty {
+  background: rgba(139, 255, 206, 0.025);
+}
+
+.widget-float {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Floating over the chat, a widget needs a solid face to stay readable. */
+.widget-float > .widget {
+  background: rgba(10, 15, 12, 0.95);
+}
+
+.widget-dragging {
+  z-index: 60;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.widget-dragging > .widget {
+  border-color: rgba(139, 255, 206, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 28px 60px -20px rgba(0, 0, 0, 0.95),
+    0 0 0 4px var(--color-green-dim);
+}
+
+/* The magnet: near a slot, the widget glides into it (and back out). */
+.widget-dragging-snapped {
+  transition: transform 0.14s ease-out, width 0.14s ease-out, height 0.14s ease-out;
+}
+
+/* The widgets button shows at every width; the stacked-list toggle only
+   below 1200px. */
+.panel-toggle.panel-widgets {
+  display: flex;
+}
+
+.widget-picker {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  max-height: min(82vh, 640px);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 16px;
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.9);
+  animation: rise-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+.widget-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  overflow-y: auto;
+  border-top: 1px solid var(--color-hairline);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.widget-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 0.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.widget-picker-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Off, and can't go on until another is switched off. */
+.widget-picker-row-blocked {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.widget-picker-row-blocked:hover {
+  background: none;
+}
+
+.widget-switch:disabled {
+  cursor: not-allowed;
+}
+
+.widget-picker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.widget-picker-name {
+  font-size: 0.92rem;
+  color: var(--color-white);
+}
+
+.widget-picker-desc {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+}
+
+/* A switch, built on a real checkbox so it keeps keyboard and screen-reader
+   behaviour. */
+.widget-switch {
+  appearance: none;
+  flex-shrink: 0;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-hairline);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.widget-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-muted);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+}
+
+.widget-switch:checked {
+  background: rgba(52, 229, 143, 0.35);
+  border-color: rgba(139, 255, 206, 0.55);
+}
+
+.widget-switch:checked::after {
+  transform: translateX(16px);
+  background: var(--color-green-bright);
+}
+
+.widget-switch:focus-visible {
+  outline: 2px solid var(--color-green);
+  outline-offset: 2px;
+}
+
+.widget-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1.25rem;
+  min-height: 2.9rem;
+}
+
+.widget-picker-note {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+}
+
+.widget-picker-note-error {
+  color: #ff9b8f;
+}
+
+.widget-picker-actions {
+  display: flex;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-dragging-snapped {
+    transition: none;
+  }
+}
+
+.widget-tree {
+  flex: 1.15 1 0;
+}
+
+.widget-commits,
+.widget-summary,
+.widget-branches,
+.widget-contributors {
+  flex: 1 1 0;
+}
+
+.widget-pulls {
+  flex: 1.25 1 0;
+}
+
+.widget-chip {
+  flex-shrink: 0;
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: var(--color-green-bright);
+  background: var(--color-green-dim);
+  border: 1px solid rgba(139, 255, 206, 0.25);
+}
+
+.widget-chip-muted {
+  margin-left: 0.4rem;
+  color: var(--color-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.widget-avatar {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--color-hairline);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.branch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.branch-row,
+.contributor-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  color: var(--color-white);
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.branch-row:hover,
+.contributor-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.branch-row > svg {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.branch-row > svg:first-child {
+  color: var(--color-green);
+}
+
+.branch-diff {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.branch-ahead {
+  color: var(--color-green);
+}
+
+.branch-behind {
+  color: var(--color-muted);
+}
+
+.commit-row.pull-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.pull-row .widget-avatar {
+  margin-top: 0.1rem;
+}
+
+.pull-text,
+.contributor-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.contributor-text {
+  gap: 0.3rem;
+}
+
+.contributor-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.contributor-bar {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.issue-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.15rem;
+}
+
+.issue-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  color: var(--color-muted);
+  padding: 0.1rem 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+
+.issue-label-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-muted);
+}
+
+.ci-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-muted);
+}
+
+.ci-pass {
+  background: var(--color-green);
+  box-shadow: 0 0 8px rgba(52, 229, 143, 0.6);
+}
+
+.ci-fail {
+  background: #ff6b5e;
+  box-shadow: 0 0 8px rgba(255, 107, 94, 0.55);
+}
+
+.ci-running {
+  background: #f5c451;
+  animation: ci-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes ci-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.widget-ci .branch-row .commit-meta {
+  flex-shrink: 0;
+}
+
+.release-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  text-decoration: none;
+}
+
+.release-tag {
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 480;
+  color: var(--color-white);
+  line-height: 1.1;
+}
+
+.release-name {
+  font-size: 0.84rem;
+  color: var(--color-white);
+}
+
+.release-since {
+  align-self: flex-start;
+  margin-top: 0.35rem;
+  font-size: 0.74rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  color: var(--color-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.release-since-ahead {
+  color: var(--color-green-bright);
+  background: var(--color-green-dim);
+}
+
+.release-body:hover .release-tag {
+  color: var(--color-green-bright);
+}
+
+.languages-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.languages-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.languages-bar span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.languages-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.languages-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+  color: var(--color-white);
+}
+
+.plan-widget-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.plan-widget-goal {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--color-white);
+}
+
+.widget-plan .plan-step {
+  font-size: 0.8rem;
+}
+
+.suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.suggestion {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--color-white);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.suggestion:hover {
+  border-color: rgba(139, 255, 206, 0.5);
+  background: var(--color-green-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ci-running {
+    animation: none;
+  }
+}
+
+.contributor-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-green), var(--color-green-bright));
+}
+
+.widget > :not(.widget-head) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+
+.widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.widget-head h3 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-green);
+}
+
+.widget-meta {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.widget-note {
+  display: block;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.widget-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-green);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.widget-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding-top: 0.2rem;
+}
+
+.widget-skeleton span {
+  display: block;
+  height: 0.7rem;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(139, 255, 206, 0.1), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: widget-shimmer 1.4s ease-in-out infinite;
+}
+
+.widget-skeleton span:nth-child(2) {
+  width: 80%;
+}
+
+.widget-skeleton span:nth-child(3) {
+  width: 60%;
+}
+
+@keyframes widget-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Tree rows, shared by the widget preview and the full-tree window. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: var(--color-white);
+}
+
+.tree-row svg {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.tree-dir > svg:not(.tree-caret),
+.tree-preview-row > svg:first-child {
+  color: var(--color-green);
+}
+
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-count {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.tree-preview-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 0;
+}
+
+.tree-preview-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  align-self: flex-start;
+  font-size: 0.78rem;
+  color: var(--color-green);
+  transition: color 0.2s ease;
+}
+
+.tree-preview:hover .tree-preview-open,
+.tree-preview:focus-visible .tree-preview-open {
+  color: var(--color-green-bright);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.widget-tree:has(.tree-preview:hover) {
+  border-color: rgba(139, 255, 206, 0.45);
+}
+
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.commit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease;
+}
+
+.commit-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.commit-message {
+  font-size: 0.84rem;
+  color: var(--color-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-meta {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-meta code {
+  color: var(--color-green);
+  font-size: 0.72rem;
+}
+
+.summary-body p {
+  margin: 0 0 0.7rem;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--color-white);
+}
+
+.summary-stack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.summary-stack li {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  color: var(--color-green-bright);
+  background: var(--color-green-dim);
+  border: 1px solid rgba(139, 255, 206, 0.25);
+}
+
+/* Full file tree, in a window over the app. */
+.tree-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 4, 3, 0.7);
+  animation: tree-fade 0.2s ease both;
+}
+
+.tree-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: min(82vh, 780px);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 16px;
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.9);
+  animation: rise-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+.tree-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.5rem 1.25rem;
+}
+
+.tree-modal-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.tree-modal-title h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 480;
+  color: var(--color-white);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-modal-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.25rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.tree-filter {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  color: var(--color-white);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  outline: none;
+}
+
+.tree-filter:focus {
+  border-color: rgba(139, 255, 206, 0.55);
+  box-shadow: 0 0 0 3px var(--color-green-dim);
+}
+
+.tree-modal-tools .action-toggle {
+  white-space: nowrap;
+}
+
+.tree-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem 1rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+
+.tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-modal-body .tree-row {
+  width: 100%;
+  padding: 0.3rem 0.5rem 0.3rem calc(0.5rem + var(--depth, 0) * 1.1rem);
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  text-decoration: none;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.tree-modal-body .tree-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tree-modal-body .tree-file:hover .tree-name {
+  color: var(--color-green-bright);
+}
+
+.tree-caret {
+  color: var(--color-muted);
+  transition: transform 0.15s ease;
+}
+
+.tree-caret-open {
+  transform: rotate(90deg);
+}
+
+.tree-caret-space {
+  flex-shrink: 0;
+  width: 12px;
+}
+
+@keyframes tree-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .repo-panel,
+  .tree-modal,
+  .tree-modal-backdrop {
+    animation: none;
+  }
+
+  .widget-skeleton span {
+    animation: none;
   }
 }

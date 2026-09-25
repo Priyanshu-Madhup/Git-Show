@@ -127,6 +127,15 @@ def list_directory(tree_id, parent_path) -> list[dict]:
     return [{"path": p, "type": t, "size": s} for p, t, s in rows]
 
 
+def all_entries(tree_id, limit) -> list[tuple]:
+    """Every path in the tree as (path, type, size), for the tree viewer."""
+    with connection() as conn:
+        return conn.execute(
+            "select path, type, size from repository_files where tree_id = %s order by path limit %s",
+            (tree_id, limit),
+        ).fetchall()
+
+
 def find_files(tree_id, pattern) -> list[dict]:
     """Case-insensitive match on the path. '*' works as a wildcard;
     anything else is a substring match."""

@@ -56,7 +56,7 @@ Stored in Postgres, in three layers:
 
 | Layer | What | Updated |
 |---|---|---|
-| Conversation | `messages` — every message, with its agent timeline and plan | as each turn starts and ends |
+| Conversation | `messages` — every message, with its agent timeline and plan; `conversations` — title, repository, and chosen widgets | as each turn starts and ends |
 | Summary | `conversation_summaries` — a rolling summary of each chat | after every assistant message, in the background |
 | What the agents did | `agent_runs`, `plans`, `agent_steps`, `tool_calls`, `pending_actions` | as each step runs |
 
@@ -111,6 +111,7 @@ git_show/
 │   ├── github_tools.py    # GitHub REST wrappers + tool schemas
 │   ├── repo_index.py      # persistent per-branch file index
 │   ├── codebase.py        # whole-codebase outline from one archive download
+│   ├── repo_panel.py      # the chat's repository panel: tree, commits, summary, branches, PRs, contributors
 │   ├── memory.py          # query_memory: validated, sandboxed SQL over the user's history
 │   ├── summaries.py       # rolling conversation summaries
 │   ├── llm.py             # Gemini client, JSON/schema completions
@@ -132,6 +133,10 @@ git_show/
     │   │   ├── Transcript.jsx    # line-by-line printed agent transcripts
     │   │   └── AgentTree.jsx     # animated agent diagram
     │   ├── App.jsx/.css       # chat app: history sidebar, agent timeline, plan card, confirm card
+    │   ├── RepoPicker.jsx     # searchable repository picker
+    │   ├── RepoPanel.jsx      # repository panel widgets, dragging and snapping, the full-tree window
+    │   ├── widgetLayout.js    # the widget list, and where each widget is (home slot or floating)
+    │   ├── WidgetPicker.jsx   # the window for choosing a chat's widgets
     │   ├── warmup.js          # wakes a sleeping backend on page load
     │   └── index.css
     ├── vercel.json            # /api/* rewrite to the backend when hosted on Vercel
@@ -221,6 +226,16 @@ Either way, the backend needs a long-running host (Render, Railway, Fly.io, a VM
 | `GET /api/auth/me` | The signed-in user, or 401 |
 | `POST /api/auth/logout` | End the session |
 | `GET /api/github/repos` | The user's accessible repositories, for the picker |
+| `GET /api/repos/{owner}/{repo}/tree` | Every path in the repository's default branch, for the repository panel |
+| `GET /api/repos/{owner}/{repo}/commits` | The latest commits on the default branch |
+| `GET /api/repos/{owner}/{repo}/branches` | Every branch, with how far each is ahead of / behind the default branch |
+| `GET /api/repos/{owner}/{repo}/pulls` | Open pull requests, most recently updated first |
+| `GET /api/repos/{owner}/{repo}/contributors` | Top contributors by commit count |
+| `GET /api/repos/{owner}/{repo}/issues` | Open issues (not pull requests), most recently updated first |
+| `GET /api/repos/{owner}/{repo}/ci` | The latest GitHub Actions run of each workflow |
+| `GET /api/repos/{owner}/{repo}/release` | The latest release and how many commits the default branch has gained since |
+| `GET /api/repos/{owner}/{repo}/languages` | Each language's share of the code |
+| `GET /api/repos/{owner}/{repo}/summary` | A short model-written summary, main stack, and suggested questions (cached per repository for 6 hours) |
 | `POST /api/chat` | Start a run (signed-in only); streams NDJSON events |
 | `POST /api/github/actions/execute` | Confirm a proposed change; streams the rest of the run |
 | `POST /api/github/actions/cancel` | Cancel a proposed change; streams the wrap-up |
@@ -228,6 +243,8 @@ Either way, the backend needs a long-running host (Render, Railway, Fly.io, a VM
 | `GET /api/runs/{id}/trace` | A run's full trace: plan versions, steps, tool calls |
 | `GET /api/conversations` | The user's chats, newest first |
 | `GET /api/conversations/{id}` | One chat with its messages |
+| `GET /api/conversations/{id}/changes` | The changes confirmed and made in a chat |
+| `PUT /api/conversations/{id}/widgets` | Save which repository-panel widgets a chat shows (at most 6) |
 | `DELETE /api/conversations/{id}` | Delete a chat |
 
 Streaming endpoints send one JSON object per line: `agent` (a hand-off), `step` (a tool call), `plan` (a new plan version), and a final `final` event with the reply, and optionally `pending_action`, `can_continue`, or `signed_out`.
@@ -236,6 +253,9 @@ Streaming endpoints send one JSON object per line: `agent` (a hand-off), `step` 
 
 - **Landing page (`/`)**: a Three.js commit graph that grows on load while the headline prints letter by letter; scrolling flies the camera through a four-stage story (ask, plan, confirm, remember), each stage printing a real transcript line by line, with side branches colored by agent. A "Who does what" section animates the agent tree with pulses tracing a request. Reduced-motion users get the content without motion.
 - **Chat (`/app`)**: signed-out visitors see the chat but can't type until they sign in. A sidebar lists past chats; each reply shows its agent timeline (collapsible), the plan checklist, and, for proposals, a card with **View changes** (diff), **Details**, **Cancel**, and **Confirm**.
+- **Repository panel**: once a repository is chosen and the first message is sent, widgets float as cards in the main window: branches (ahead/behind the default branch), languages, and top contributors on the left; the project tree (click it for the whole tree in a window, with a filter), the latest commits, and a summary of the repository on the right. The chat sits between the two columns. Below 1200px wide they're opened from a top-bar button and float over the chat as one list. Tree, commits, branches, pull requests, and the other GitHub-backed widgets refresh after a confirmed change.
+- **Movable widgets** (1200px and wider): drag a widget by its header anywhere in the chat area. Near one of the six home slots it snaps in magnetically (swapping with whatever is there); anywhere else it floats where it's dropped. Double-click a header to send that widget home. The layout is saved in the browser.
+- **Choosing widgets**: the widgets button in the top bar opens a window with a switch for each of 13 widgets, up to 6 on at once. Besides the six above (on by default), there are open pull requests, open issues, CI status (latest run of each GitHub Actions workflow), latest release (and commits since), the current plan, the changes confirmed in this chat, and suggested questions (a click puts one in the chat box). The choice is saved with the chat in Postgres (`conversations.widgets`); a new chat shows the defaults. A widget switched on takes the first free place, preferring its own column. Switched-off widgets aren't fetched at all. The same window has **Reset positions** (after dragging) and **Use defaults**.
 - Replies are rendered from a small, HTML-escaped Markdown subset (headings, lists, tables, code blocks, inline code, bold/italic).
 
 ## Security notes

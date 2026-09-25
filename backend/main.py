@@ -21,6 +21,7 @@ from pydantic import BaseModel  # noqa: E402
 import db  # noqa: E402
 import llm  # noqa: E402
 import orchestrator  # noqa: E402
+import repo_panel  # noqa: E402
 from db import runs as run_store  # noqa: E402
 
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
@@ -90,6 +91,19 @@ class ChatRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     id: str
+
+
+# The repository panel's widgets (see frontend/src/widgetLayout.js).
+PANEL_WIDGETS = (
+    "branches", "pulls", "contributors", "tree", "commits", "summary",
+    "issues", "ci", "release", "languages", "plan", "changes", "suggestions",
+)
+# How many a chat can show at once (the panel has six places).
+MAX_PANEL_WIDGETS = 6
+
+
+class WidgetsRequest(BaseModel):
+    widgets: list[str]
 
 
 @app.get("/api/health")
@@ -296,6 +310,73 @@ def _require_llm():
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured. Set it in backend/.env.")
 
 
+def _repo_panel_call(fn, owner, repo, session_id):
+    """Run one repo_panel read as the signed-in user, turning GitHub's
+    refusals into a plain 404 (it doesn't say whether the repo exists)."""
+    session = _require_session(session_id)
+    try:
+        return fn(session["access_token"], owner, repo)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (401, 403, 404):
+            raise HTTPException(status_code=404, detail="Repository not found or not accessible.")
+        raise HTTPException(status_code=502, detail="GitHub request failed.")
+
+
+@app.get("/api/repos/{owner}/{repo}/tree")
+def repo_tree(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.tree, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/commits")
+def repo_commits(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.commits, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/branches")
+def repo_branches(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.branches, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/pulls")
+def repo_pulls(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.pulls, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/contributors")
+def repo_contributors(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.contributors, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/issues")
+def repo_issues(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.issues, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/ci")
+def repo_ci(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.ci, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/release")
+def repo_release(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.release, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/languages")
+def repo_languages(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    return _repo_panel_call(repo_panel.languages, owner, repo, session_id)
+
+
+@app.get("/api/repos/{owner}/{repo}/summary")
+def repo_summary(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    _require_llm()
+    try:
+        return _repo_panel_call(repo_panel.summary, owner, repo, session_id)
+    except (llm.LLMError, ValueError):
+        raise HTTPException(status_code=502, detail="Couldn't summarize this repository right now.")
+
+
 @app.post("/api/chat")
 def chat(payload: ChatRequest, session_id: str | None = Cookie(default=None)):
     _require_llm()
@@ -361,6 +442,29 @@ def get_conversation(conversation_id: uuid.UUID, session_id: str | None = Cookie
     if not conversation:
         raise HTTPException(status_code=404, detail="Chat not found.")
     return conversation
+
+
+@app.get("/api/conversations/{conversation_id}/changes")
+def conversation_changes(conversation_id: uuid.UUID, session_id: str | None = Cookie(default=None)):
+    session = _require_session(session_id)
+    return {"changes": db.list_executed_actions(conversation_id, session["user_id"])}
+
+
+@app.put("/api/conversations/{conversation_id}/widgets")
+def set_conversation_widgets(
+    conversation_id: uuid.UUID, payload: WidgetsRequest, session_id: str | None = Cookie(default=None)
+):
+    session = _require_session(session_id)
+    unknown = set(payload.widgets) - set(PANEL_WIDGETS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown widgets: {', '.join(sorted(unknown))}")
+    # Stored in the canonical order, without duplicates.
+    widgets = [w for w in PANEL_WIDGETS if w in payload.widgets]
+    if len(widgets) > MAX_PANEL_WIDGETS:
+        raise HTTPException(status_code=400, detail=f"A chat can show at most {MAX_PANEL_WIDGETS} widgets.")
+    if not db.set_conversation_widgets(conversation_id, session["user_id"], widgets):
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {"widgets": widgets}
 
 
 @app.delete("/api/conversations/{conversation_id}")
