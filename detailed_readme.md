@@ -81,7 +81,7 @@ browser ──▶ frontend (React/Vite)
 
 **Backend**
 - FastAPI + Uvicorn
-- Gemini via the `openai` Python SDK against Gemini's OpenAI-compatible endpoint (default model `gemini-flash-lite-latest`); plans and routing decisions use JSON-schema structured output
+- OpenRouter via the `openai` Python SDK against OpenRouter's OpenAI-compatible endpoint (default model `z-ai/glm-5.3-flash`); Gemini stays configured as a fallback (`LLM_PROVIDER=gemini`). Plans and routing decisions use JSON-schema structured output
 - Postgres on Supabase via `psycopg` 3 + `psycopg-pool`
 - `cryptography` (Fernet) — GitHub tokens are encrypted at rest
 - `sqlglot` — parses and validates the SQL the memory tool runs
@@ -147,7 +147,7 @@ git_show/
 
 ### Prerequisites
 - Python 3.12+ and Node.js 18+
-- A [Gemini API key](https://aistudio.google.com/apikey)
+- An [OpenRouter API key](https://openrouter.ai/keys) (or a [Gemini API key](https://aistudio.google.com/apikey) if using `LLM_PROVIDER=gemini`)
 - A Supabase project (any Postgres works) — you need its **session pooler** connection string
 - A [GitHub App](https://github.com/settings/apps) with:
   - **Callback URL** `http://localhost:5173/api/auth/github/callback`
@@ -165,7 +165,10 @@ uvicorn main:app --reload --port 8000
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | yes | Gemini API key |
+| `LLM_PROVIDER` | no | `openrouter` (default) or `gemini` — which provider the agents use |
+| `OPENROUTER_API_KEY` | yes (if using OpenRouter) | OpenRouter API key |
+| `OPENROUTER_MODEL` | no | Model id (default `z-ai/glm-5.3-flash`) |
+| `GEMINI_API_KEY` | yes (if using Gemini) | Gemini API key |
 | `GEMINI_MODEL` | no | Model id (default `gemini-flash-lite-latest`) |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | yes | GitHub App's client credentials |
 | `GITHUB_CALLBACK_URL` | yes | Must match a callback URL registered on the App |

@@ -1,5 +1,7 @@
-"""Thin wrapper over Gemini's OpenAI-compatible endpoint, shared by every
-agent."""
+"""Thin wrapper over an OpenAI-compatible chat completions endpoint, shared
+by every agent. Provider is chosen by LLM_PROVIDER ("openrouter" or
+"gemini"); both sets of credentials can sit in .env at once so switching
+back is a one-line change."""
 
 import json
 import logging
@@ -14,6 +16,8 @@ load_dotenv()
 
 log = logging.getLogger("gitshow.llm")
 
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower()
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # "-latest" aliases always resolve to Google's current stable model for that
 # tier, so this keeps tracking their cheapest Flash tier without needing a
@@ -21,10 +25,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "z-ai/glm-5.3-flash")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+if LLM_PROVIDER == "gemini":
+    API_KEY, MODEL, BASE_URL = GEMINI_API_KEY, GEMINI_MODEL, GEMINI_BASE_URL
+else:
+    LLM_PROVIDER = "openrouter"
+    API_KEY, MODEL, BASE_URL = OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_BASE_URL
+
 REQUEST_TIMEOUT_SECONDS = 90
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
-_client = OpenAI(api_key=GEMINI_API_KEY, base_url=GEMINI_BASE_URL) if GEMINI_API_KEY else None
+_PLACEHOLDERS = {"your_gemini_api_key_here", "your_openrouter_api_key_here"}
+
+_client = OpenAI(api_key=API_KEY, base_url=BASE_URL) if API_KEY else None
 
 
 class LLMError(Exception):
@@ -32,7 +48,7 @@ class LLMError(Exception):
 
 
 def is_configured() -> bool:
-    return bool(GEMINI_API_KEY) and GEMINI_API_KEY != "your_gemini_api_key_here"
+    return bool(API_KEY) and API_KEY not in _PLACEHOLDERS
 
 
 def complete(messages, tools=None, json_mode=False, schema=None):
@@ -40,8 +56,11 @@ def complete(messages, tools=None, json_mode=False, schema=None):
     raises LLMError otherwise. schema (a JSON Schema) constrains the reply
     to that exact shape via structured output."""
     if _client is None:
-        raise LLMError("GEMINI_API_KEY is not configured. Set it in backend/.env.")
-    kwargs = {"model": GEMINI_MODEL, "messages": messages, "timeout": REQUEST_TIMEOUT_SECONDS}
+        raise LLMError(
+            f"{'OPENROUTER_API_KEY' if LLM_PROVIDER == 'openrouter' else 'GEMINI_API_KEY'} "
+            "is not configured. Set it in backend/.env."
+        )
+    kwargs = {"model": MODEL, "messages": messages, "timeout": REQUEST_TIMEOUT_SECONDS}
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
@@ -60,7 +79,7 @@ def complete(messages, tools=None, json_mode=False, schema=None):
             if attempt == 0 and (status in RETRYABLE_STATUS or status is None):
                 time.sleep(2)
                 continue
-            raise LLMError(f"Gemini request failed: {exc}") from exc
+            raise LLMError(f"{LLM_PROVIDER} request failed: {exc}") from exc
 
 
 JSON_REPAIR_ATTEMPTS = 2

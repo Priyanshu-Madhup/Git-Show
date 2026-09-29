@@ -307,7 +307,8 @@ def _require_session(session_id: str | None) -> dict:
 
 def _require_llm():
     if not llm.is_configured():
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured. Set it in backend/.env.")
+        key_name = "OPENROUTER_API_KEY" if llm.LLM_PROVIDER == "openrouter" else "GEMINI_API_KEY"
+        raise HTTPException(status_code=500, detail=f"{key_name} is not configured. Set it in backend/.env.")
 
 
 def _repo_panel_call(fn, owner, repo, session_id):
