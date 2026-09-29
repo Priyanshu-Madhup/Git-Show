@@ -341,7 +341,11 @@ function App() {
   const widgetSaveSeq = useRef(0)
   // Safety toggle: off by default for every new chat. While off, the
   // orchestrator and planner never call the writer agent for this chat.
+  // The switch only shows "on" once the server has confirmed it — sending
+  // a message while the toggle is still in flight would let the backend
+  // read the old value, defeating the point of the toggle.
   const [writeMode, setWriteMode] = useState(false)
+  const [writeModeSaving, setWriteModeSaving] = useState(false)
   const writeModeSaveSeq = useRef(0)
 
   useEffect(() => {
@@ -683,7 +687,7 @@ function App() {
 
   const sendMessage = async (text) => {
     const trimmed = text.trim()
-    if (!trimmed || !user || isSending || isStreaming) return
+    if (!trimmed || !user || isSending || isStreaming || writeModeSaving) return
 
     if (!hasStarted) {
       flipFromRect.current = searchFieldRef.current.getBoundingClientRect()
@@ -745,7 +749,7 @@ function App() {
   }
 
   const saveWriteMode = async (value) => {
-    setWriteMode(value)
+    setWriteModeSaving(true)
     const seq = ++writeModeSaveSeq.current
     try {
       const res = await fetch(`/api/conversations/${chatId}/write_mode`, {
@@ -754,9 +758,12 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ write_mode: value }),
       })
-      if (seq === writeModeSaveSeq.current && !res.ok) setWriteMode(!value)
+      if (seq === writeModeSaveSeq.current) {
+        if (res.ok) setWriteMode(value)
+        setWriteModeSaving(false)
+      }
     } catch {
-      if (seq === writeModeSaveSeq.current) setWriteMode(!value)
+      if (seq === writeModeSaveSeq.current) setWriteModeSaving(false)
     }
   }
 
@@ -867,18 +874,21 @@ function App() {
             {hasStarted && user && (
               <button
                 type="button"
-                className={`write-mode-toggle ${writeMode ? 'write-mode-on' : 'write-mode-off'}`}
+                className={`write-mode-toggle ${writeMode ? 'write-mode-on' : 'write-mode-off'} ${writeModeSaving ? 'write-mode-saving' : ''}`}
                 role="switch"
                 aria-checked={writeMode}
+                disabled={writeModeSaving}
                 onClick={() => saveWriteMode(!writeMode)}
                 title={
-                  writeMode
-                    ? 'Write mode is on — the writer agent can propose changes for this chat'
-                    : 'Write mode is off — the writer agent is disabled for this chat'
+                  writeModeSaving
+                    ? 'Saving…'
+                    : writeMode
+                      ? 'Write mode is on — the writer agent can propose changes for this chat'
+                      : 'Write mode is off — the writer agent is disabled for this chat'
                 }
               >
                 <span className="write-mode-dot" aria-hidden="true" />
-                {writeMode ? 'Write on' : 'Write off'}
+                {writeModeSaving ? 'Saving…' : writeMode ? 'Write on' : 'Write off'}
               </button>
             )}
             {repoChat && (
@@ -1135,7 +1145,7 @@ function App() {
                 className="submit-btn"
                 type="submit"
                 aria-label="Ask"
-                disabled={!user || isSending || isStreaming || !query.trim()}
+                disabled={!user || isSending || isStreaming || writeModeSaving || !query.trim()}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path

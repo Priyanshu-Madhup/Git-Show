@@ -437,6 +437,20 @@
   background: var(--color-green-dim);
 }
 
+.write-mode-saving {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.write-mode-saving .write-mode-dot {
+  animation: write-mode-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes write-mode-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 .write-mode-on .write-mode-dot {
   background: var(--color-green-bright);
   box-shadow: 0 0 0 3px rgba(52, 229, 143, 0.18);
