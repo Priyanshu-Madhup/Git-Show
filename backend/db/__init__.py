@@ -281,7 +281,7 @@ def get_conversation(conversation_id, user_id) -> dict | None:
     confirmed; otherwise action_state says what became of them."""
     with connection() as conn:
         conv = conn.execute(
-            "select id, title, repo, widgets from conversations where id = %s and user_id = %s",
+            "select id, title, repo, widgets, write_mode from conversations where id = %s and user_id = %s",
             (conversation_id, user_id),
         ).fetchone()
         if not conv:
@@ -323,6 +323,7 @@ def get_conversation(conversation_id, user_id) -> dict | None:
         "title": conv[1] or "New chat",
         "repo": conv[2],
         "widgets": conv[3],
+        "write_mode": conv[4],
         "messages": messages,
     }
 
@@ -376,6 +377,17 @@ def set_conversation_widgets(conversation_id, user_id, widgets) -> bool:
     return True
 
 
+def set_conversation_write_mode(conversation_id, user_id, write_mode: bool) -> bool:
+    """Save the write-mode toggle for a chat, claiming it first (as
+    set_conversation_widgets does) in case its first message hasn't landed
+    yet."""
+    with connection() as conn:
+        if not claim_conversation(conn, conversation_id, user_id):
+            return False
+        conn.execute("update conversations set write_mode = %s where id = %s", (write_mode, conversation_id))
+    return True
+
+
 def delete_conversation(conversation_id, user_id) -> bool:
     with connection() as conn:
         row = conn.execute(
@@ -402,7 +414,8 @@ def get_context(conversation_id, user_id) -> dict:
                        select json_agg(json_build_object('role', m.role, 'content', m.content) order by m.id)
                        from messages m
                        where m.conversation_id = c.id and m.id > coalesce(s.summarized_through, 0)
-                   ), '[]'::json)
+                   ), '[]'::json),
+                   c.write_mode
             from conversations c
             left join conversation_summaries s on s.conversation_id = c.id
             where c.id = %s
@@ -410,11 +423,11 @@ def get_context(conversation_id, user_id) -> dict:
             (user_id, conversation_id),
         ).fetchone()
     if not row:
-        return {"owner": "new", "summary": "", "recent": []}
-    mine, summary, recent = row
+        return {"owner": "new", "summary": "", "recent": [], "write_mode": False}
+    mine, summary, recent, write_mode = row
     if not mine:
-        return {"owner": "other", "summary": "", "recent": []}
-    return {"owner": "mine", "summary": summary, "recent": recent}
+        return {"owner": "other", "summary": "", "recent": [], "write_mode": False}
+    return {"owner": "mine", "summary": summary, "recent": recent, "write_mode": bool(write_mode)}
 
 
 def get_unsummarized(conversation_id) -> tuple[str, int, list[dict]]:

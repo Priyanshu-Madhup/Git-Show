@@ -106,6 +106,10 @@ class WidgetsRequest(BaseModel):
     widgets: list[str]
 
 
+class WriteModeRequest(BaseModel):
+    write_mode: bool
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -466,6 +470,16 @@ def set_conversation_widgets(
     if not db.set_conversation_widgets(conversation_id, session["user_id"], widgets):
         raise HTTPException(status_code=404, detail="Chat not found.")
     return {"widgets": widgets}
+
+
+@app.put("/api/conversations/{conversation_id}/write_mode")
+def set_conversation_write_mode(
+    conversation_id: uuid.UUID, payload: WriteModeRequest, session_id: str | None = Cookie(default=None)
+):
+    session = _require_session(session_id)
+    if not db.set_conversation_write_mode(conversation_id, session["user_id"], payload.write_mode):
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {"write_mode": payload.write_mode}
 
 
 @app.delete("/api/conversations/{conversation_id}")

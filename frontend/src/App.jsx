@@ -339,6 +339,10 @@ function App() {
   const [widgetPickerOpen, setWidgetPickerOpen] = useState(false)
   const [widgetSaveState, setWidgetSaveState] = useState(null)
   const widgetSaveSeq = useRef(0)
+  // Safety toggle: off by default for every new chat. While off, the
+  // orchestrator and planner never call the writer agent for this chat.
+  const [writeMode, setWriteMode] = useState(false)
+  const writeModeSaveSeq = useRef(0)
 
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'include' })
@@ -416,6 +420,7 @@ function App() {
     setSidebarOpen(false)
     setPanelOpen(false)
     setChatWidgets(null)
+    setWriteMode(false)
   }
 
   const openConversation = async (id) => {
@@ -442,6 +447,7 @@ function App() {
       )
       setSelectedRepo(repos.some((r) => r.full_name === data.repo) ? data.repo : '')
       setChatWidgets(data.widgets || null)
+      setWriteMode(!!data.write_mode)
       setHasStarted(true)
     } catch {
       loadConversations()
@@ -738,6 +744,22 @@ function App() {
     }
   }
 
+  const saveWriteMode = async (value) => {
+    setWriteMode(value)
+    const seq = ++writeModeSaveSeq.current
+    try {
+      const res = await fetch(`/api/conversations/${chatId}/write_mode`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ write_mode: value }),
+      })
+      if (seq === writeModeSaveSeq.current && !res.ok) setWriteMode(!value)
+    } catch {
+      if (seq === writeModeSaveSeq.current) setWriteMode(!value)
+    }
+  }
+
   return (
     <div className="page">
       <div className={`frame ${hasStarted ? 'frame-chat' : ''}`}>
@@ -842,6 +864,23 @@ function App() {
             <span />
           </button>
           <div className="topbar-right">
+            {hasStarted && user && (
+              <button
+                type="button"
+                className={`write-mode-toggle ${writeMode ? 'write-mode-on' : 'write-mode-off'}`}
+                role="switch"
+                aria-checked={writeMode}
+                onClick={() => saveWriteMode(!writeMode)}
+                title={
+                  writeMode
+                    ? 'Write mode is on — the writer agent can propose changes for this chat'
+                    : 'Write mode is off — the writer agent is disabled for this chat'
+                }
+              >
+                <span className="write-mode-dot" aria-hidden="true" />
+                {writeMode ? 'Write on' : 'Write off'}
+              </button>
+            )}
             {repoChat && (
               <button
                 type="button"

@@ -66,6 +66,9 @@ alter table conversations add column if not exists title text;
 alter table conversations add column if not exists repo text;
 -- Which repository-panel widgets this chat shows; null means the default six.
 alter table conversations add column if not exists widgets text[];
+-- Safety toggle: off by default, so the Writer agent can't propose changes
+-- until the user opts in for this chat. Sticks once set.
+alter table conversations add column if not exists write_mode boolean not null default false;
 create index if not exists conversations_user_updated_idx on conversations(user_id, updated_at desc);
 
 -- steps is the tool timeline shown above an assistant reply. An assistant

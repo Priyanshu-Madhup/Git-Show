@@ -66,6 +66,9 @@ PLAN_PROMPT = (
     "- When revising, keep finished steps as done, keep ids stable, give new steps new ids, and "
     "don't repeat a step whose output you already have.\n"
     "- If the user cancelled a proposed change, don't propose it (or a variant) again.\n"
+    "- If a writer step's result says write mode is off for this chat, don't propose it or any other "
+    "writer step again this run: set done=true and tell the user in final_answer to turn on the "
+    "write-mode toggle next to the widgets button, then ask again.\n"
     "- If you need something only the user can decide (a branch name, commit message, which of "
     "several options), set done=true and ask in final_answer.\n"
     "- When the goal is achieved, set done=true and write final_answer for the user: what was "
@@ -384,7 +387,24 @@ def _execute(ctx):
             yield from _check(ctx, step, observation)
             continue
 
-        # Writer step: propose one change, then pause for the user's confirmation.
+        # Writer step: propose one change, then pause for the user's confirmation —
+        # unless write mode is off for this chat, in which case the Writer never runs.
+        if not ctx.write_mode:
+            step_id = ctx.start_step("writer", step["instruction"], plan_step_id=step["id"])
+            ctx.finish_step(step_id, "failed", "Write mode is off for this chat.")
+            observation = _observe(
+                ctx,
+                step,
+                "no_change_proposed",
+                "Write mode is off for this chat, so the writer agent is not allowed to run. Don't "
+                "propose this step (or any other writer step) again this run — tell the user, in the "
+                "final answer, that they need to turn on the write-mode toggle next to the widgets "
+                "button before this change can be made.",
+            )
+            yield runtime.agent_event(ctx, "writer", "Writer agent: disabled by the write-mode toggle")
+            yield from _check(ctx, step, observation)
+            continue
+
         yield runtime.agent_event(ctx, "writer", f"Planning agent → Writer agent · {progress}: {runtime.short(step['instruction'])}")
         step_id = ctx.start_step("writer", step["instruction"], plan_step_id=step["id"])
         outcome = yield from writer.propose(

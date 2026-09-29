@@ -63,6 +63,10 @@ class RunContext:
     # Conversation memory and repository overview, as system messages.
     context_messages: list = field(default_factory=list)
     repo_messages: list = field(default_factory=list)
+    # The chat's write-mode toggle (off by default). Refreshed by
+    # runtime.load_context on every turn, so a flip mid-run takes effect
+    # before the next Writer call.
+    write_mode: bool = False
 
     @property
     def owner_repo(self):

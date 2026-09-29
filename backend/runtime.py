@@ -40,6 +40,11 @@ WRITE_LABELS = {
     "add_issue_comment": lambda a: f"Commenting on #{a.get('issue_number')}",
 }
 
+WRITE_MODE_DISABLED_MESSAGE = (
+    "Write mode is off for this chat, so I can't make that change. Turn on the toggle next to the "
+    "widgets button, then ask again."
+)
+
 DONE_LABELS = {
     "edit_file": lambda a: f"edited `{a.get('path')}`",
     "restore_file": lambda a: f"restored `{a.get('path')}` to its version at `{str(a.get('ref', ''))[:7]}`",
@@ -94,6 +99,7 @@ def restore_context(run, session) -> RunContext:
 def load_context(ctx):
     """Conversation memory + repository overview for the agents."""
     context = db.get_context(ctx.conversation_id, ctx.user_id)
+    ctx.write_mode = context["write_mode"]
     ctx.context_messages = conversation_messages(context)
     overview = None
     owner, name = ctx.owner_repo

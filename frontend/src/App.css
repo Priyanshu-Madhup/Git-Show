@@ -397,6 +397,51 @@
   gap: 0.75rem;
 }
 
+.write-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 36px;
+  padding: 0 0.75rem 0 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-hairline);
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.write-mode-toggle:hover {
+  color: var(--color-white);
+}
+
+.write-mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.write-mode-off .write-mode-dot {
+  background: #ff9f9f;
+}
+
+.write-mode-on {
+  border-color: var(--color-green);
+  color: var(--color-green-bright);
+  background: var(--color-green-dim);
+}
+
+.write-mode-on .write-mode-dot {
+  background: var(--color-green-bright);
+  box-shadow: 0 0 0 3px rgba(52, 229, 143, 0.18);
+}
+
 .avatar {
   width: 40px;
   height: 40px;

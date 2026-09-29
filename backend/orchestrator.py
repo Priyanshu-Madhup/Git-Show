@@ -154,6 +154,9 @@ def _dispatch(ctx):
     if decision["agent"] == "writer":
         ctx.state["mode"] = "writer"
         runtime.checkpoint(ctx, mode="writer")
+        if not ctx.write_mode:
+            yield from _writer_disabled(ctx, decision["instruction"])
+            return
         yield runtime.agent_event(ctx, "writer", "Orchestrator → Writer agent (one step)")
         step_id = ctx.start_step("writer", decision["instruction"])
         outcome = yield from writer.propose(
@@ -201,6 +204,15 @@ def _dispatch(ctx):
         yield from _hand_to_planner(ctx)
         return
     yield runtime.finish(ctx, result.text)
+
+
+def _writer_disabled(ctx, instruction):
+    """The one-step case wanted the Writer, but write mode is off for this
+    chat: end the run and explain, without ever calling writer.propose."""
+    step_id = ctx.start_step("writer", instruction)
+    ctx.finish_step(step_id, "failed", "Write mode is off for this chat.")
+    yield runtime.agent_event(ctx, "writer", "Writer agent: disabled by the write-mode toggle")
+    yield runtime.finish(ctx, runtime.WRITE_MODE_DISABLED_MESSAGE)
 
 
 def _codebase_context(ctx, step_id, path):
