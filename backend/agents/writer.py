@@ -55,21 +55,47 @@ class WriterOutcome:
 
 def _read_in_full(evidence, owner, repo, path):
     """Whether this run holds a complete copy of owner/repo/path, read by
-    the Reader — the only safe basis for replacing its whole content."""
+    the Reader — the only safe basis for replacing its whole content. A
+    large file can't be read in one call (get_file_contents caps at 200
+    lines, truncated or not), so this also recognizes several reads
+    together covering every line with no gaps — e.g. a truncated
+    get_file_contents for lines 1-200 plus a get_file_lines for the rest."""
     target = path.lower().lstrip("/")
+    covered = []  # (start, end) 1-based inclusive ranges this evidence proves were read
+    total_lines = None
     for e in evidence or []:
         args, result = e.get("arguments") or {}, e.get("result") or {}
         if (args.get("owner") or "").lower() != owner.lower() or (args.get("repo") or "").lower() != repo.lower():
             continue
         if str(result.get("path") or args.get("path") or "").lower().lstrip("/") != target:
             continue
-        if e.get("tool") in ("get_file_contents", "get_readme"):
-            if result.get("content") is not None and not result.get("truncated") and not result.get("content_omitted"):
+        tool = e.get("tool")
+        if tool in ("get_file_contents", "get_readme"):
+            if result.get("content") is None:
+                continue  # content_omitted: only an outline was returned, nothing to cover with
+            total_lines = total_lines or result.get("total_lines")
+            if not result.get("truncated") and not result.get("content_omitted"):
                 return True
-        if e.get("tool") == "get_file_lines":
-            if result.get("start_line") == 1 and result.get("end_line") == result.get("total_lines") and not result.get("truncated"):
-                return True
-    return False
+            shown = result.get("shown_lines")  # e.g. "1-200", set when get_file_contents truncates by line count
+            if shown and "-" in shown:
+                start, end = shown.split("-", 1)
+                covered.append((int(start), int(end)))
+        elif tool == "get_file_lines":
+            total_lines = total_lines or result.get("total_lines")
+            # A truncated slice (cut by the character safety cap) can't be trusted as complete.
+            if result.get("truncated"):
+                continue
+            start, end = result.get("start_line"), result.get("end_line")
+            if start and end:
+                covered.append((start, end))
+    if not covered or not total_lines:
+        return False
+    pos = 1
+    for start, end in sorted(covered):
+        if start > pos:
+            return False  # a gap: some line in between was never read
+        pos = max(pos, end + 1)
+    return pos > total_lines
 
 
 def _evidence_message(evidence):
