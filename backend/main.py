@@ -280,31 +280,43 @@ def auth_logout(session_id: str | None = Cookie(default=None)):
 
 @app.get("/api/github/repos")
 def list_repos(session_id: str | None = Cookie(default=None)):
+    """Repos the GitHub App can actually act on for this user — never a repo
+    they merely own, since owning a repo and the App being installed on it
+    are different things. Listing from plain /user/repos instead would let
+    someone pick a repo that looks available but 403s on the first write."""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Not signed in.")
 
-    res = requests.get(
-        "https://api.github.com/user/repos",
-        headers={
-            "Authorization": f"Bearer {session['access_token']}",
-            "Accept": "application/vnd.github+json",
-        },
-        params={"per_page": 50, "sort": "updated"},
-        timeout=10,
+    headers = {"Authorization": f"Bearer {session['access_token']}", "Accept": "application/vnd.github+json"}
+    installations_res = requests.get(
+        "https://api.github.com/user/installations", headers=headers, params={"per_page": 100}, timeout=10
     )
-    if res.status_code != 200:
+    if installations_res.status_code != 200:
         raise HTTPException(status_code=502, detail="Failed to fetch repositories from GitHub.")
 
-    repos = [
-        {
-            "name": r["name"],
-            "full_name": r["full_name"],
-            "private": r["private"],
-            "html_url": r["html_url"],
-        }
-        for r in res.json()
-    ]
+    repos_by_name = {}
+    for installation in installations_res.json().get("installations", []):
+        repos_res = requests.get(
+            f"https://api.github.com/user/installations/{installation['id']}/repositories",
+            headers=headers,
+            params={"per_page": 100},
+            timeout=10,
+        )
+        if repos_res.status_code != 200:
+            continue
+        for r in repos_res.json().get("repositories", []):
+            repos_by_name[r["full_name"]] = {
+                "name": r["name"],
+                "full_name": r["full_name"],
+                "private": r["private"],
+                "html_url": r["html_url"],
+                "updated_at": r.get("updated_at") or "",
+            }
+
+    repos = sorted(repos_by_name.values(), key=lambda r: r["updated_at"], reverse=True)
+    for r in repos:
+        del r["updated_at"]
     return {"repos": repos}
 
 def _require_session(session_id: str | None) -> dict:
