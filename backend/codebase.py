@@ -9,6 +9,7 @@ Outlines are cached per commit, so asking again about an unchanged repo is
 free."""
 
 import io
+import re
 import tarfile
 import threading
 
@@ -28,8 +29,64 @@ MAX_SOURCE_FILE_BYTES = 400 * 1024
 # asked to narrow it with `path`, so one call never floods the context.
 MAX_OUTLINE_CHARS = 60_000
 
+# Files that describe how a project is built, deployed, or stores data. They
+# aren't outlined, but the architecture analysis reads them.
+MANIFEST_NAMES = {
+    "package.json", "requirements.txt", "pyproject.toml", "pipfile", "setup.py", "go.mod", "cargo.toml",
+    "pom.xml", "build.gradle", "build.gradle.kts", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+    "compose.yml", "compose.yaml", "vercel.json", "render.yaml", "netlify.toml", "fly.toml", "procfile",
+    "app.json", "serverless.yml", "wrangler.toml", "vite.config.js", "vite.config.ts", "next.config.js",
+    "next.config.mjs", "nuxt.config.ts", "angular.json", ".env.example", "env.example", "schema.prisma",
+}
+MAX_MANIFEST_BYTES = 40 * 1024
+MANIFEST_CHARS = 3000
+MAX_MANIFESTS = 30
+
 _cache: dict[tuple, dict] = {}
 _lock = threading.Lock()
+
+_PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s*,\s*[\w.]+)*)", re.M)
+_PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*[\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n#]+)", re.M)
+_JS_IMPORT = re.compile(
+    r"""(?:^|[;\s])(?:import|export)\s+(?:type\s+)?[\w*{}\s,$]*?\s*from\s*['"]([^'"]+)['"]"""
+    r"""|(?:^|[;\s])import\s*['"]([^'"]+)['"]"""
+    r"""|\brequire\(\s*['"]([^'"]+)['"]\s*\)"""
+    r"""|\bimport\(\s*['"]([^'"]+)['"]\s*\)""",
+    re.M,
+)
+_GO_IMPORT_BLOCK = re.compile(r"^import\s*\((.*?)\)", re.M | re.S)
+_GO_IMPORT_LINE = re.compile(r'^import\s+(?:\w+\s+)?"([^"]+)"', re.M)
+_JAVA_IMPORT = re.compile(r"^import\s+(?:static\s+)?([\w.]+?)(?:\.\*)?;", re.M)
+
+
+def _imports(text, ext):
+    """Raw import specifiers, as written. Python entries keep the imported
+    names too, since `from pkg import mod` may name a module file."""
+    if ext == "py":
+        found = [{"module": m.strip(), "names": []} for g in _PY_IMPORT.findall(text) for m in g.split(",")]
+        for module, names in _PY_FROM.findall(text):
+            parsed = [n.split()[0] for n in names.strip("()").split(",") if n.strip()]
+            found.append({"module": module, "names": [n for n in parsed if n.isidentifier()]})
+        return found
+    if ext in ("js", "jsx", "ts", "tsx"):
+        return [{"module": next(g for g in groups if g)} for groups in _JS_IMPORT.findall(text)]
+    if ext == "go":
+        specs = _GO_IMPORT_LINE.findall(text)
+        for block in _GO_IMPORT_BLOCK.findall(text):
+            specs += re.findall(r'"([^"]+)"', block)
+        return [{"module": s} for s in specs]
+    if ext == "java":
+        return [{"module": m} for m in _JAVA_IMPORT.findall(text)]
+    return []
+
+
+def _is_manifest(path):
+    name = path.rsplit("/", 1)[-1].lower()
+    return (
+        name in MANIFEST_NAMES
+        or path.lower().startswith(".github/workflows/")
+        or name.endswith((".sql", ".prisma"))
+    )
 
 
 def _doc_hint(lines, index, ext):
@@ -99,7 +156,7 @@ def _build(token, owner, repo, commit_sha):
             raise ValueError("This repository is too large to outline in one go; use find_files and get_file_outline instead.")
     buf.seek(0)
 
-    files, other = {}, 0
+    files, manifests, other = {}, {}, 0
     with tarfile.open(fileobj=buf, mode="r:gz") as archive:
         for member in archive:
             if not member.isfile():
@@ -112,22 +169,33 @@ def _build(token, owner, repo, commit_sha):
             ext = parts[-1].rsplit(".", 1)[-1].lower() if "." in parts[-1] else ""
             if ext not in github_tools.FUNCTION_PATTERNS or member.size > MAX_SOURCE_FILE_BYTES:
                 other += 1
+                if _is_manifest(path) and member.size <= MAX_MANIFEST_BYTES and len(manifests) < MAX_MANIFESTS:
+                    text = archive.extractfile(member).read().decode("utf-8", errors="replace")
+                    manifests[path] = text[:MANIFEST_CHARS]
                 continue
             text = archive.extractfile(member).read().decode("utf-8", errors="replace")
             total, symbols = _outline_file(text, ext)
-            files[path] = {"lines": total, "symbols": symbols}
-    return {"files": files, "other_files": other}
+            files[path] = {"lines": total, "symbols": symbols, "imports": _imports(text, ext)}
+    return {"files": files, "manifests": manifests, "other_files": other}
+
+
+def load(token, owner, repo, commit_sha):
+    """The full outline (with imports and manifests) for one commit, built
+    once and then served from memory."""
+    key = (f"{owner}/{repo}".lower(), commit_sha)
+    with _lock:
+        outline = _cache.get(key)
+    if outline is None:
+        outline = _build(token, owner, repo, commit_sha)
+        with _lock:
+            _cache[key] = outline
+    return outline
 
 
 def get_codebase_outline(token, owner, repo, path="", ref=None):
     index = repo_index.ensure_index(token, owner, repo, branch=ref)
-    key = (index["repository"].lower(), index["commit_sha"])
-    with _lock:
-        outline = _cache.get(key)
-    if outline is None:
-        outline = _build(token, owner, repo, index["commit_sha"])
-        with _lock:
-            _cache[key] = outline
+    owner_name, _, repo_name = index["repository"].partition("/")
+    outline = load(token, owner_name, repo_name, index["commit_sha"])
 
     prefix = path.strip("/")
     selected = {
@@ -141,7 +209,7 @@ def get_codebase_outline(token, owner, repo, path="", ref=None):
         "path": prefix or "/",
         "source_files": len(selected),
         "non_source_files": outline["other_files"],
-        "files": [{"path": p, **info} for p, info in selected.items()],
+        "files": [{"path": p, "lines": info["lines"], "symbols": info["symbols"]} for p, info in selected.items()],
     }
     if len(str(result)) <= MAX_OUTLINE_CHARS:
         return result

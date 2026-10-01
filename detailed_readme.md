@@ -50,6 +50,15 @@ Progress streams to the browser as it happens (agent hand-offs, tool calls, plan
 - **Codebase outline** ([codebase.py](backend/codebase.py)) — for "explain this project" questions, the whole repository is downloaded once as an archive and every source file's classes and functions are listed (signature, line number, first docstring line), cached per commit. The orchestrator hands this outline to the Reader up front, so it reasons from the real code and only opens function bodies where it must.
 - **Targeted reads** — `get_file_outline`, `get_function_source` (one function, returned whole), and `get_file_lines` (an exact range). Files over 200 lines come back from `get_file_contents` as an outline instead of their full body.
 
+## Architecture view
+
+The **Architecture** button in the top bar (next to the write-mode toggle) opens a diagram of the selected repository's architecture.
+
+- **How it's built** ([architecture.py](backend/architecture.py)): the same single archive download as the codebase outline also records every source file's imports and the files that describe how the project is built, deployed, and stores data (`package.json`, `requirements.txt`, Dockerfiles, `vercel.json`, SQL schemas…). Imports are resolved to files in the repository (Python, JS/TS, Go, Java), giving a real module graph. One model call then groups the code into components, connections, and key flows, using that graph as evidence; components' paths are checked against real files, and dependencies the import graph proves but the model left out are added as dashed "inferred" edges.
+- **Stored, not recomputed**: the result is saved in `repository_architectures` (one row per repository, with the commit it was built from). Opening it again reads the stored result; the frontend also caches it for the session with TanStack Query, so reopening makes no request at all. It only re-runs when someone presses **Re-analyze** (offered when the branch has moved on since the analysis).
+- **Runs in the background**: an analysis takes about a minute, so `POST` starts it on a background thread and the view polls until it's ready. Starting is atomic, so double clicks (or two users) never run two analyses of the same repository.
+- **Two views**: *Components* (the model's architecture: apps, services, subsystems, data stores, external systems) and *Modules* (the deterministic directory-level import graph). Laid out with dagre in whichever direction fits the window better, rendered with React Flow. Clicking a node shows its description, responsibilities, tech, metrics, connections, and where it lives in the repository.
+
 ## Memory
 
 Stored in Postgres, in three layers:
@@ -90,6 +99,7 @@ browser ──▶ frontend (React/Vite)
 **Frontend**
 - React 19 + Vite 8, plain CSS
 - Three.js — the landing page's 3D commit graph (loaded only on that page, in its own chunk)
+- React Flow (`@xyflow/react`) + dagre (`@dagrejs/dagre`) — the architecture diagram (loaded only when it's first opened); TanStack Query caches it for the session
 - `@fontsource` Fraunces + Inter
 - `oxlint`; Playwright only for ad-hoc local screenshot scripts
 
@@ -110,7 +120,8 @@ git_show/
 │   │   └── prompts.py     # shared prompt rules
 │   ├── github_tools.py    # GitHub REST wrappers + tool schemas
 │   ├── repo_index.py      # persistent per-branch file index
-│   ├── codebase.py        # whole-codebase outline from one archive download
+│   ├── codebase.py        # whole-codebase outline (plus imports and manifests) from one archive download
+│   ├── architecture.py    # architecture analysis: import graph, model-grouped components, stored per repo
 │   ├── repo_panel.py      # the chat's repository panel: tree, commits, summary, branches, PRs, contributors
 │   ├── memory.py          # query_memory: validated, sandboxed SQL over the user's history
 │   ├── summaries.py       # rolling conversation summaries
@@ -133,6 +144,7 @@ git_show/
     │   │   ├── Transcript.jsx    # line-by-line printed agent transcripts
     │   │   └── AgentTree.jsx     # animated agent diagram
     │   ├── App.jsx/.css       # chat app: history sidebar, agent timeline, plan card, confirm card
+    │   ├── architecture/      # the architecture window: React Flow diagram, dagre layout, details panel
     │   ├── RepoPicker.jsx     # searchable repository picker
     │   ├── RepoPanel.jsx      # repository panel widgets, dragging and snapping, the full-tree window
     │   ├── widgetLayout.js    # the widget list, and where each widget is (home slot or floating)
@@ -239,6 +251,8 @@ Either way, the backend needs a long-running host (Render, Railway, Fly.io, a VM
 | `GET /api/repos/{owner}/{repo}/release` | The latest release and how many commits the default branch has gained since |
 | `GET /api/repos/{owner}/{repo}/languages` | Each language's share of the code |
 | `GET /api/repos/{owner}/{repo}/summary` | A short model-written summary, main stack, and suggested questions (cached per repository for 6 hours) |
+| `GET /api/repos/{owner}/{repo}/architecture` | The stored architecture analysis and its status (`none`, `running`, `ready`, `failed`), and whether the branch has moved on since; never starts one |
+| `POST /api/repos/{owner}/{repo}/architecture` | Start an architecture analysis in the background, unless one is running or already stored (`{"force": true}` re-analyzes) |
 | `POST /api/chat` | Start a run (signed-in only); streams NDJSON events |
 | `POST /api/github/actions/execute` | Confirm a proposed change; streams the rest of the run |
 | `POST /api/github/actions/cancel` | Cancel a proposed change; streams the wrap-up |

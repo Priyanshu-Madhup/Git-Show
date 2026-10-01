@@ -437,6 +437,26 @@
   background: var(--color-green-dim);
 }
 
+.architecture-btn {
+  color: var(--color-green);
+}
+
+.architecture-btn:hover {
+  border-color: var(--color-green);
+  background: var(--color-green-dim);
+  color: var(--color-green-bright);
+}
+
+@media (max-width: 760px) {
+  .architecture-btn {
+    padding: 0 0.6rem;
+  }
+
+  .architecture-btn-label {
+    display: none;
+  }
+}
+
 .write-mode-saving {
   opacity: 0.6;
   cursor: default;

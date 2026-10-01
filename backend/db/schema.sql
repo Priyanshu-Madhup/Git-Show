@@ -131,6 +131,23 @@ create table if not exists repository_files (
 );
 create index if not exists repository_files_parent_idx on repository_files(tree_id, parent_path);
 
+-- A repository's architecture (components and how they connect), analyzed
+-- once by the model and kept, so opening it again never re-runs the
+-- analysis. One row per repository. commit_sha/branch name the latest job;
+-- the architecture json carries the commit it was actually built from, so
+-- an older result stays visible while a re-analysis runs. Like the index,
+-- access is checked with the user's own token before it's ever shown.
+create table if not exists repository_architectures (
+    repository_id  bigint primary key references repositories(id) on delete cascade,
+    branch         text not null,
+    commit_sha     text not null,
+    status         text not null check (status in ('running', 'ready', 'failed')),
+    architecture   jsonb,
+    error          text,
+    started_at     timestamptz not null default now(),
+    completed_at   timestamptz
+);
+
 -- --- agent execution trace -------------------------------------------------
 -- One run per user request (and its confirm/continue follow-ups). state holds
 -- what the orchestrator needs to resume after a confirmation or a pause.
@@ -206,6 +223,7 @@ alter table users                  enable row level security;
 alter table repositories           enable row level security;
 alter table repository_trees       enable row level security;
 alter table repository_files       enable row level security;
+alter table repository_architectures enable row level security;
 alter table agent_runs             enable row level security;
 alter table plans                  enable row level security;
 alter table agent_steps            enable row level security;

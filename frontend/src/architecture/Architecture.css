@@ -1,0 +1,625 @@
+/* The architecture window: the same chrome as the full file tree, but wide,
+   with the diagram on the left and details on the right. */
+.arch-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1440px, 100%);
+  height: min(92vh, 960px);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-hairline);
+  border-radius: 16px;
+  box-shadow: 0 32px 80px -24px rgba(0, 0, 0, 0.9);
+  animation: rise-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+.arch-head-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.9rem;
+}
+
+.arch-head-tools .action-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+.arch-tabs {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 999px;
+}
+
+.arch-tabs button {
+  padding: 0.3rem 0.8rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.arch-tabs button:hover {
+  color: var(--color-white);
+}
+
+.arch-tabs button[aria-selected='true'],
+.arch-tabs button[aria-pressed='true'] {
+  background: var(--color-green-dim);
+  color: var(--color-green-bright);
+}
+
+/* Pill buttons in the header: an on/off switch (with a status dot) and an
+   action, sized to sit beside the segmented switches. */
+.arch-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 33px;
+  padding: 0 0.85rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.arch-pill:hover:not(:disabled) {
+  border-color: var(--color-green);
+  color: var(--color-white);
+}
+
+.arch-pill:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.arch-pill-spin {
+  animation: wake-spin 0.9s linear infinite;
+}
+
+.arch-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 1.25rem 0.6rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  background: var(--color-green-dim);
+  color: var(--color-white);
+  font-size: 0.82rem;
+}
+
+.arch-banner-warn {
+  border-color: rgba(255, 210, 122, 0.4);
+  background: rgba(255, 210, 122, 0.08);
+}
+
+.arch-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  border-top: 1px solid var(--color-hairline);
+}
+
+.arch-canvas {
+  position: relative;
+  min-height: 0;
+  background: var(--color-bg);
+}
+
+.arch-panel {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem 1.15rem 1.25rem;
+  border-left: 1px solid var(--color-hairline);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+
+@media (max-width: 900px) {
+  .arch-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 42%);
+  }
+
+  .arch-panel {
+    border-left: none;
+    border-top: 1px solid var(--color-hairline);
+  }
+
+  .arch-canvas .react-flow__minimap {
+    display: none;
+  }
+
+  .arch-head-tools {
+    gap: 0.6rem;
+  }
+}
+
+/* --- React Flow, in the app's colors -------------------------------------- */
+
+.arch-canvas .react-flow {
+  --xy-background-color: var(--color-bg);
+  --xy-edge-stroke: rgba(52, 229, 143, 0.55);
+  --xy-edge-stroke-width: 1.6;
+  --xy-edge-label-background-color: var(--color-bg-raised);
+  --xy-edge-label-color: var(--color-muted);
+  --xy-controls-button-background-color: var(--color-bg-raised);
+  --xy-controls-button-background-color-hover: #121a15;
+  --xy-controls-button-color: var(--color-green);
+  --xy-controls-button-color-hover: var(--color-green-bright);
+  --xy-controls-button-border-color: var(--color-hairline);
+  --xy-controls-box-shadow: none;
+  --xy-minimap-background-color: rgba(10, 15, 12, 0.92);
+  --xy-minimap-mask-stroke-color: var(--color-hairline);
+  font-family: var(--font-sans);
+}
+
+.arch-canvas .react-flow__controls {
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.arch-canvas .react-flow__minimap {
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.arch-canvas .react-flow__edge-text {
+  fill: var(--color-muted);
+  font-size: 11px;
+}
+
+.arch-canvas .react-flow__edge-textbg {
+  fill: var(--color-bg-raised);
+}
+
+.arch-edge-imports .react-flow__edge-path {
+  stroke: rgba(139, 255, 206, 0.32);
+}
+
+.arch-edge-http .react-flow__edge-path,
+.arch-edge-events .react-flow__edge-path {
+  stroke: var(--color-green-bright);
+}
+
+.arch-edge-inferred .react-flow__edge-path {
+  stroke-dasharray: 5 5;
+}
+
+.arch-edge-dim {
+  opacity: 0.12;
+}
+
+.arch-canvas .arch-edge-focus .react-flow__edge-path {
+  stroke: var(--color-green-bright);
+  stroke-width: 2.2;
+}
+
+/* Arrows flow slowly by default, and quickly for the hovered or selected
+   node, in the direction of the connection. */
+.arch-canvas .react-flow__edge.animated .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+  animation: arch-flow 1.4s linear infinite;
+}
+
+.arch-canvas .react-flow__edge.animated.arch-edge-inferred .react-flow__edge-path {
+  stroke-dasharray: 2 3;
+}
+
+.arch-canvas .react-flow__edge.animated.arch-edge-focus .react-flow__edge-path {
+  animation-duration: 0.35s;
+}
+
+@keyframes arch-flow {
+  from {
+    stroke-dashoffset: 20;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-canvas .react-flow__edge.animated .react-flow__edge-path {
+    animation: none;
+  }
+}
+
+.arch-canvas .arch-edge-focus .react-flow__edge-text {
+  fill: var(--color-white);
+}
+
+.arch-hint {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 999px;
+  background: rgba(10, 15, 12, 0.85);
+  color: var(--color-muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --- nodes ------------------------------------------------------------------- */
+
+.arch-node {
+  --kind: var(--color-green);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 248px;
+  height: 132px;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--kind) 38%, transparent);
+  border-left: 3px solid var(--kind);
+  border-radius: 12px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--kind) 11%, var(--color-bg-raised)), var(--color-bg-raised) 70%);
+  box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.9);
+  cursor: pointer;
+  transition: opacity 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.arch-node:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--kind) 55%, transparent), 0 16px 34px -18px rgba(0, 0, 0, 0.9);
+}
+
+.arch-node-module {
+  width: 220px;
+  height: 74px;
+  justify-content: center;
+}
+
+.arch-node-selected,
+.arch-node-selected:hover {
+  box-shadow: 0 0 0 2px var(--kind), 0 16px 40px -16px color-mix(in srgb, var(--kind) 45%, transparent);
+}
+
+.arch-node-dim {
+  opacity: 0.28;
+}
+
+.arch-node-kind {
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--kind);
+}
+
+.arch-node-name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--color-white);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.arch-node-module .arch-node-name {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.arch-node-meta {
+  overflow: hidden;
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One row of chips: any that don't fit wrap onto a hidden second row
+   rather than showing cut in half. */
+.arch-node-tech {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  height: 1.3rem;
+  margin-top: auto;
+  overflow: hidden;
+}
+
+.arch-node-tech .arch-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-handle {
+  width: 6px;
+  height: 6px;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  background: var(--kind);
+  opacity: 0;
+}
+
+/* --- details panel ----------------------------------------------------------- */
+
+.arch-chip {
+  flex-shrink: 0;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.arch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.arch-chips .arch-chip {
+  font-size: 0.74rem;
+}
+
+.arch-summary {
+  margin: 0 0 0.9rem;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-white);
+}
+
+.arch-muted {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.arch-white {
+  color: var(--color-white);
+  font-weight: 560;
+}
+
+.arch-mono {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.arch-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.arch-stats div {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-hairline);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.arch-stats dt {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+}
+
+.arch-stats dd {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--color-green-bright);
+}
+
+.arch-section {
+  margin-top: 1.1rem;
+}
+
+.arch-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-green);
+}
+
+.arch-flow {
+  margin-bottom: 0.85rem;
+}
+
+.arch-flow h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--color-white);
+}
+
+.arch-flow ol,
+.arch-bullets {
+  margin: 0;
+  padding-left: 1.15rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--color-muted);
+}
+
+.arch-flow li::marker {
+  color: var(--color-green);
+}
+
+.arch-link-list,
+.arch-paths {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arch-link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.45rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-white);
+  font-family: var(--font-sans);
+  font-size: 0.83rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.arch-link:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.arch-link strong {
+  font-weight: 560;
+}
+
+.arch-arrow {
+  color: var(--color-green);
+}
+
+.arch-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kind);
+}
+
+.arch-paths li + li {
+  margin-top: 0.25rem;
+}
+
+.arch-paths a {
+  color: var(--color-green);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.arch-paths a:hover {
+  color: var(--color-green-bright);
+  text-decoration: underline;
+}
+
+.arch-kind-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--kind) 50%, transparent);
+  border-radius: 999px;
+  color: var(--kind);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.arch-detail-title {
+  margin: 0.55rem 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 480;
+  color: var(--color-white);
+  word-break: break-word;
+}
+
+.arch-foot {
+  margin: 1.25rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-hairline);
+  font-size: 0.74rem;
+  color: var(--color-muted);
+}
+
+/* --- loading, progress, errors -------------------------------------------- */
+
+.arch-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2rem;
+  border-top: 1px solid var(--color-hairline);
+  text-align: center;
+}
+
+.arch-state h3 {
+  margin: 0.4rem 0 0;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 480;
+  color: var(--color-white);
+}
+
+.arch-state p {
+  max-width: 34rem;
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-muted);
+}
+
+.arch-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--color-green-dim);
+  border-top-color: var(--color-green);
+  border-radius: 50%;
+  animation: wake-spin 0.8s linear infinite;
+}
+
+.arch-spinner-small {
+  width: 14px;
+  height: 14px;
+}
+
+.arch-btn {
+  margin-top: 0.4rem;
+  padding: 0.5rem 1.1rem;
+  border: 1px solid var(--color-green);
+  border-radius: 999px;
+  background: var(--color-green-dim);
+  color: var(--color-green-bright);
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.arch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
+import architecture  # noqa: E402
 import db  # noqa: E402
 import llm  # noqa: E402
 import orchestrator  # noqa: E402
@@ -108,6 +109,10 @@ class WidgetsRequest(BaseModel):
 
 class WriteModeRequest(BaseModel):
     write_mode: bool
+
+
+class ArchitectureRequest(BaseModel):
+    force: bool = False
 
 
 @app.get("/api/health")
@@ -380,6 +385,25 @@ def repo_summary(owner: str, repo: str, session_id: str | None = Cookie(default=
         return _repo_panel_call(repo_panel.summary, owner, repo, session_id)
     except (llm.LLMError, ValueError):
         raise HTTPException(status_code=502, detail="Couldn't summarize this repository right now.")
+
+
+@app.get("/api/repos/{owner}/{repo}/architecture")
+def repo_architecture(owner: str, repo: str, session_id: str | None = Cookie(default=None)):
+    """The stored architecture analysis (status 'none' if there isn't one).
+    Never starts an analysis."""
+    return _repo_panel_call(architecture.status, owner, repo, session_id)
+
+
+@app.post("/api/repos/{owner}/{repo}/architecture")
+def analyze_repo_architecture(
+    owner: str, repo: str, payload: ArchitectureRequest, session_id: str | None = Cookie(default=None)
+):
+    """Start an analysis in the background, unless one is running or one is
+    already stored (force re-analyzes anyway). Poll the GET for the result."""
+    _require_llm()
+    return _repo_panel_call(
+        lambda token, o, r: architecture.start(token, o, r, force=payload.force), owner, repo, session_id
+    )
 
 
 @app.post("/api/chat")

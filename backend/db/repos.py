@@ -2,6 +2,8 @@
 repository_trees (one per branch, stamped with its commit), and
 repository_files."""
 
+from psycopg.types.json import Jsonb
+
 from db import connection
 
 
@@ -187,3 +189,86 @@ def overview(tree_id) -> dict:
         "directories": [d[0] + "/" for d in dirs],
         "file_types": {e or "(none)": c for e, c in exts},
     }
+
+
+# --- architecture ------------------------------------------------------------
+
+
+def get_architecture(repository_id) -> dict | None:
+    with connection() as conn:
+        row = conn.execute(
+            """
+            select branch, commit_sha, status, architecture, error, started_at, completed_at,
+                   status = 'running' and started_at < now() - make_interval(secs => %s)
+            from repository_architectures where repository_id = %s
+            """,
+            (ARCHITECTURE_JOB_TIMEOUT_SECONDS, repository_id),
+        ).fetchone()
+    if not row:
+        return None
+    branch, commit_sha, status, architecture, error, started_at, completed_at, abandoned = row
+    if abandoned:
+        # The process running it died (a restart or deploy); treat it as failed.
+        status, error = "failed", "The analysis was interrupted. Try again."
+    return {
+        "branch": branch,
+        "commit_sha": commit_sha,
+        "status": status,
+        "architecture": architecture,
+        "error": error,
+        "started_at": started_at,
+        "completed_at": completed_at,
+    }
+
+
+# A job still "running" after this long belongs to a process that died.
+ARCHITECTURE_JOB_TIMEOUT_SECONDS = 15 * 60
+
+
+def claim_architecture_job(repository_id, branch, commit_sha) -> bool:
+    """Mark an analysis as running, unless one already is. Atomic, so two
+    clicks (or two users) never start two analyses of the same repo. Keeps
+    any earlier result so it stays visible meanwhile."""
+    with connection() as conn:
+        row = conn.execute(
+            """
+            insert into repository_architectures (repository_id, branch, commit_sha, status)
+            values (%s, %s, %s, 'running')
+            on conflict (repository_id) do update
+                set branch = excluded.branch,
+                    commit_sha = excluded.commit_sha,
+                    status = 'running',
+                    error = null,
+                    started_at = now(),
+                    completed_at = null
+                where repository_architectures.status <> 'running'
+                   or repository_architectures.started_at < now() - make_interval(secs => %s)
+            returning repository_id
+            """,
+            (repository_id, branch, commit_sha, ARCHITECTURE_JOB_TIMEOUT_SECONDS),
+        ).fetchone()
+    return row is not None
+
+
+def finish_architecture_job(repository_id, architecture) -> None:
+    with connection() as conn:
+        conn.execute(
+            """
+            update repository_architectures
+            set status = 'ready', architecture = %s, error = null, completed_at = now()
+            where repository_id = %s
+            """,
+            (Jsonb(architecture), repository_id),
+        )
+
+
+def fail_architecture_job(repository_id, error) -> None:
+    with connection() as conn:
+        conn.execute(
+            """
+            update repository_architectures
+            set status = 'failed', error = %s, completed_at = now()
+            where repository_id = %s
+            """,
+            (error[:500], repository_id),
+        )
