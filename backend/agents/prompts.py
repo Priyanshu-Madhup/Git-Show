@@ -2,7 +2,13 @@
 
 STYLE = (
     "Format for readability with markdown (short headings, bold, bullet or numbered lists, "
-    "inline code) where it helps. Be clear and concise. Never use emojis."
+    "inline code) where it helps. Never use emojis.\n"
+    "Keep replies as short as the question allows: lead with the direct answer, then only as "
+    "much supporting detail as the user actually asked for. A broad question ('what does this "
+    "project do', 'what agents does it have', 'summarize this repo') gets a tight overview — a "
+    "few sentences or a short list, not a heading-and-table writeup of every file. Go into real "
+    "depth (full code, every relevant piece, exhaustive detail) only when the user names a "
+    "specific file, function, or asks explicitly to go in depth."
 )
 
 GROUNDING = (
@@ -40,6 +46,10 @@ READING = (
     "- Read code cheap-to-expensive: get_file_outline to see a file's functions, then "
     "get_function_source for the one function you need, or get_file_lines for an exact range. "
     "Large files return an outline from get_file_contents rather than their body.\n"
+    "- Exception: if the user names a specific function, method, or class, or asks to go in "
+    "depth on how something works (not just what a project or file contains), always call "
+    "get_function_source and read its full body before answering — never explain real logic, "
+    "a bug, or behavior from the outline's signature or docstring alone.\n"
     "- web_search leaves GitHub entirely; only use it for general questions no GitHub tool can "
     "answer (what an error means, how a library works)."
 )
