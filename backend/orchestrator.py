@@ -10,16 +10,20 @@ It never performs a GitHub operation itself. Entry points return
 generators of NDJSON lines for StreamingResponse."""
 
 import json
+import logging
 import time
 
 import codebase
 import db
 import llm
 import runtime
+import wity
 from agents import planner, prompts, reader, toolsets, writer
 from agents.common import GitHubAuthError, is_auth_failure
 from db import background
 from db import runs as run_store
+
+log = logging.getLogger("gitshow.orchestrator")
 
 INTERPRET_PROMPT = (
     "You are Git Show's orchestrator. Read the user's latest message (in the context of the "
@@ -66,6 +70,160 @@ INTERPRET_SCHEMA = {
 }
 
 
+WITY_QUESTIONS = {
+    "changes_github": {
+        "type": "noul",
+        "instructions": (
+            "Does the user's latest message explicitly ask to create, change, delete, merge, "
+            "comment on, or otherwise modify something on GitHub (a branch, file, issue, pull "
+            "request, and so on)?"
+        ),
+        "criteria": {
+            "true": "They ask for a modification to be made.",
+            "false": "They ask to be told, shown, explained, listed or summarized something, or only chat.",
+        },
+    },
+    "route": {
+        "type": "choice",
+        "instructions": "How many steps does the user's latest message need, and of what kind?",
+        "criteria": {
+            "read_only": (
+                "Read-only: answer a question, look something up, list or show things, explain or "
+                "review code, recall earlier chats. Even deep questions are one read-only step."
+            ),
+            "one_change": (
+                "Exactly one GitHub change that doesn't depend on reading existing file contents "
+                "first: create or delete a branch, open an issue or PR, comment, merge a named PR, "
+                "star, fork, or create a brand-new file whose full content the user gave."
+            ),
+            "needs_plan": (
+                "Several steps: editing or rewriting any existing file (it must be read first), "
+                "undoing, reverting or rolling back anything (history must be looked up first), "
+                "several changes, an investigation followed by a change, or anything whose "
+                "approach depends on what is found."
+            ),
+        },
+    },
+    "about_codebase": {
+        "type": "noul",
+        "instructions": (
+            "Does answering need an understanding of the repository's code as a whole or of one "
+            "directory (explain, summarize or review the project, its architecture, how it works)?"
+        ),
+        "criteria": {
+            "true": "Yes, it needs the shape of the code across many files: the whole project or a whole directory.",
+            "false": "No, it concerns one named file or function, a commit, an issue, a PR, a branch, or is not about code.",
+        },
+    },
+}
+
+
+def _wity_state(ctx) -> str:
+    """The latest message, preceded by the conversation so far (summary and
+    recent messages), as plain text for Wity."""
+    lines = []
+    if ctx.repo:
+        lines.append(f"Selected repository: {ctx.repo}")
+    for message in ctx.context_messages:
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            lines.append(f"[{message.get('role', 'user')}] {content.strip()}")
+    lines.append(f"[latest user message] {ctx.user_request}")
+    return "\n\n".join(lines)
+
+
+def _decide_with_wity(ctx):
+    """The routing decisions, from Wity: changes_github, route, about_codebase.
+    None when Wity isn't configured or fails, so the main model decides."""
+    if not wity.is_configured():
+        return None
+    try:
+        answers = wity.decide(_wity_state(ctx), WITY_QUESTIONS)
+        return {
+            "changes_github": wity.yes(answers["changes_github"]),
+            "route": answers["route"]["choice"],
+            "about_codebase": wity.yes(answers["about_codebase"]),
+        }
+    except (wity.WityError, KeyError, TypeError, ValueError) as exc:
+        log.warning("Wity routing failed, using the main model: %s", exc)
+        return None
+
+
+def _interpret_with_llm(ctx) -> dict:
+    try:
+        return llm.complete_json(
+            [
+                {"role": "system", "content": INTERPRET_PROMPT},
+                *runtime.who_message(ctx),
+                *ctx.context_messages,
+                {"role": "user", "content": ctx.user_request},
+            ],
+            schema=INTERPRET_SCHEMA,
+        )
+    except (llm.LLMError, ValueError):
+        return {}
+
+
+GOAL_SHAPE = {
+    "type": "object",
+    "properties": {"goal": {"type": "string"}},
+    "required": ["goal"],
+}
+PATH_SHAPE = {
+    "type": "object",
+    "properties": {"path": {"type": "string"}},
+    "required": ["path"],
+}
+
+
+def _wity_text(ctx, instructions, shape, key) -> str:
+    """One short generated value from Wity ("" if it can't produce one)."""
+    try:
+        return str(wity.generate(_wity_state(ctx), instructions, shape).get(key) or "").strip()
+    except wity.WityError as exc:
+        log.warning("Wity couldn't write the %s: %s", key, exc)
+        return ""
+
+
+def _interpret_with_wity(ctx, routing) -> dict:
+    """The whole interpretation from Wity: the routing decisions, plus the
+    short goal sentence and codebase directory it writes itself. The
+    instruction for the Reader, Writer or planner is the user's own message
+    (nothing paraphrased, so file contents they gave arrive whole) under the
+    goal; Wity's replies are too short to carry it."""
+    route = routing["route"]
+    changes = routing["changes_github"]
+    goal = ""
+    if changes:
+        goal = _wity_text(
+            ctx,
+            "In one clear sentence, state what the user wants done. Read requests in git/GitHub "
+            "terms: 'create a branch legend' means create a git branch named 'legend'. Don't add "
+            "anything they didn't ask for.",
+            GOAL_SHAPE,
+            "goal",
+        )
+    path = ""
+    if routing["about_codebase"]:
+        path = _wity_text(
+            ctx,
+            "If the question is about one directory of the repository, give that directory's "
+            "path; if it is about the whole repository, give an empty string.",
+            PATH_SHAPE,
+            "path",
+        )
+    request = ctx.user_request
+    return {
+        "goal": goal or request,
+        "changes_github": changes,
+        "needs_planning": route == "needs_plan",
+        "agent": "writer" if route == "one_change" else "reader",
+        "about_codebase": routing["about_codebase"],
+        "codebase_path": path,
+        "instruction": f"Goal: {goal}\n\nThe user's request: {request}" if goal else request,
+    }
+
+
 def _interpret(ctx) -> dict:
     if not ctx.token:
         # Signed out: no tools at all, so a plain conversational reply.
@@ -78,24 +236,15 @@ def _interpret(ctx) -> dict:
             "codebase_path": "",
         }
     step_id = ctx.start_step("orchestrator", ctx.user_request)
-    try:
-        raw = llm.complete_json(
-            [
-                {"role": "system", "content": INTERPRET_PROMPT},
-                *runtime.who_message(ctx),
-                *ctx.context_messages,
-                {"role": "user", "content": ctx.user_request},
-            ],
-            schema=INTERPRET_SCHEMA,
-        )
-    except (llm.LLMError, ValueError):
-        raw = {}
+    routing = _decide_with_wity(ctx)
+    # Without Wity (no key, or it errored) the main model interprets instead.
+    raw = _interpret_with_wity(ctx, routing) if routing else _interpret_with_llm(ctx)
     changes = bool(raw.get("changes_github"))
     decision = {
         "goal": str(raw.get("goal") or ctx.user_request).strip(),
         # Nothing to change on GitHub means nothing for the Writer or a
         # plan of changes: a read-only request always goes to the Reader,
-        # whatever agent the model picked.
+        # whatever agent was picked.
         "needs_planning": bool(raw.get("needs_planning")) and changes,
         "agent": raw.get("agent") if changes and raw.get("agent") in ("reader", "writer") else "reader",
         "instruction": str(raw.get("instruction") or "").strip() or ctx.user_request,
