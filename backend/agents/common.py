@@ -6,6 +6,7 @@ Agent functions are generators: they yield progress events for the UI and
 `result = yield from agent(...)`."""
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -37,6 +38,31 @@ class GitHubAuthError(Exception):
 def is_auth_failure(exc) -> bool:
     response = getattr(exc, "response", None)
     return isinstance(exc, requests.HTTPError) and response is not None and response.status_code == 401
+
+
+# A repository link pasted into the chat: github.com/<owner>/<repo>, optionally
+# followed by /blob|tree/<branch>/<path>, /issues/N, /pull/N, ...
+GITHUB_REPO_URL = re.compile(r"(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)", re.I)
+NOT_OWNERS = {
+    "settings", "orgs", "apps", "marketplace", "features", "topics", "sponsors", "login", "pricing",
+    "about", "notifications", "explore", "search", "users", "enterprise", "collections", "new",
+    "organizations", "security", "site", "contact", "pulls", "issues", "codespaces", "events",
+}
+
+
+def linked_repos(text: str, selected: str | None = None, limit: int = 3) -> list:
+    """The owner/repo of each GitHub repository linked in the text, in order,
+    without duplicates and without the selected repository."""
+    found = []
+    for owner, name in GITHUB_REPO_URL.findall(text or ""):
+        name = name.rstrip(".").removesuffix(".git")
+        key = f"{owner}/{name}"
+        if owner.lower() in NOT_OWNERS or not name:
+            continue
+        if key.lower() == (selected or "").lower() or key.lower() in (f.lower() for f in found):
+            continue
+        found.append(key)
+    return found[:limit]
 
 
 @dataclass
@@ -74,6 +100,21 @@ class RunContext:
             owner, _, name = self.repo.partition("/")
             return owner, name
         return None, None
+
+    @property
+    def linked_repos(self) -> list:
+        """Repositories the user linked by URL in this chat (read-only)."""
+        return self.state.get("linked_repos") or []
+
+    @property
+    def target_owner_repo(self):
+        """The repository a whole-codebase question is about: the one linked in
+        this message, else the selected one."""
+        link = (self.state.get("message_links") or [None])[0]
+        if link:
+            owner, _, name = link.partition("/")
+            return owner, name
+        return self.owner_repo
 
     # --- budget -------------------------------------------------------------
 
@@ -224,7 +265,33 @@ def conversation_messages(context: dict) -> list:
     return [{"role": "system", "content": "\n\n".join(parts)}]
 
 
+def linked_message(ctx: RunContext) -> list:
+    if not ctx.linked_repos:
+        return []
+    names = ", ".join(ctx.linked_repos)
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"The user linked these GitHub repositories by URL: {names}. They are not the "
+                "selected repository and may belong to someone else. A question about a link "
+                "(go through the project, explain a file, commits, issues, pull requests, ...) is "
+                "about that repository: pass its owner and repo to every read tool, never the "
+                "selected one. A URL's /blob/<branch>/<path> or /tree/<branch>/<path> gives the "
+                "branch and path to read. If the message links nothing and the user says 'this', "
+                "judge from the conversation whether they mean a linked repository or the selected "
+                "one. Linked repositories are read-only: never propose a change to them. If a tool "
+                "says one isn't found, it may be private."
+            ),
+        }
+    ]
+
+
 def repo_context_message(ctx: RunContext, overview: dict | None) -> list:
+    return _selected_repo_message(ctx, overview) + linked_message(ctx)
+
+
+def _selected_repo_message(ctx: RunContext, overview: dict | None) -> list:
     if not ctx.repo:
         return []
     if not overview:

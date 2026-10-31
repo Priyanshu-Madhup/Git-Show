@@ -18,7 +18,7 @@ import db
 import llm
 import runtime
 from agents import planner, prompts, reader, toolsets, writer
-from agents.common import GitHubAuthError, is_auth_failure
+from agents.common import GitHubAuthError, is_auth_failure, linked_message
 from db import background
 from db import runs as run_store
 
@@ -48,6 +48,9 @@ INTERPRET_PROMPT = (
     "4. about_codebase: true if answering needs an understanding of the repository's code as a "
     "whole or of one directory (explain/summarize/review the project, its architecture, how it "
     "works). codebase_path: that directory, or empty for the whole repository.\n"
+    "   When the message links a GitHub repository URL, the request is about that repository: "
+    "reading it is a reader task, and 'go through / explain this project' with a link means "
+    "about_codebase true (codebase_path empty unless the URL points into a directory).\n"
     "5. instruction: for a one-step task, a self-contained instruction for that agent with "
     "every name, message, and detail the user gave. Empty when planning is needed.\n"
     "Reply with only the JSON object."
@@ -75,6 +78,7 @@ def _interpret_with_llm(ctx) -> dict:
             [
                 {"role": "system", "content": INTERPRET_PROMPT},
                 *runtime.who_message(ctx),
+                *linked_message(ctx),
                 *ctx.context_messages,
                 {"role": "user", "content": ctx.user_request},
             ],
@@ -227,7 +231,7 @@ def _codebase_context(ctx, step_id, path):
     outline up front — every file's functions and classes with signatures
     and docstring first lines — so it reasons from the real code rather than
     only the README, and reads function bodies only where it must."""
-    owner, name = ctx.owner_repo
+    owner, name = ctx.target_owner_repo
     if not (ctx.token and owner):
         return []
     arguments = {"owner": owner, "repo": name, "path": path}

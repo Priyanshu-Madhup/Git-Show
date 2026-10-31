@@ -20,6 +20,7 @@ from agents.common import (
     RunContext,
     conversation_messages,
     is_auth_failure,
+    linked_repos,
     repo_context_message,
 )
 from db import background
@@ -63,6 +64,7 @@ DONE_LABELS = {
 
 
 def new_context(*, message, chat_id, repo, session) -> RunContext:
+    links = linked_repos(message, repo)
     return RunContext(
         run_id=str(uuid.uuid4()),
         conversation_id=chat_id,
@@ -72,7 +74,14 @@ def new_context(*, message, chat_id, repo, session) -> RunContext:
         user_login=(session.get("user") or {}).get("login") if session else None,
         repo=repo,
         user_request=message,
-        state={"observations": [], "evidence": [], "tool_calls_used": 0, "budget_limit": RUN_TOOL_BUDGET},
+        state={
+            "observations": [],
+            "evidence": [],
+            "tool_calls_used": 0,
+            "budget_limit": RUN_TOOL_BUDGET,
+            "message_links": links,
+            "linked_repos": links,
+        },
     )
 
 
@@ -101,6 +110,15 @@ def load_context(ctx):
     context = db.get_context(ctx.conversation_id, ctx.user_id)
     ctx.write_mode = context["write_mode"]
     ctx.context_messages = conversation_messages(context)
+    if not ctx.linked_repos:
+        # A follow-up that doesn't repeat the link: keep reading the most
+        # recently linked repository.
+        for message in reversed(context.get("recent") or []):
+            if message.get("role") == "user":
+                links = linked_repos(message.get("content"), ctx.repo)
+                if links:
+                    ctx.state["linked_repos"] = links
+                    break
     overview = None
     owner, name = ctx.owner_repo
     if ctx.token and owner:
