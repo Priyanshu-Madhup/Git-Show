@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Background, Controls, Handle, MarkerType, MiniMap, ReactFlow } from '@xyflow/react'
+import { Background, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { formatRelativeTime } from '../time.js'
-import { fitZoom, layoutGraph } from './layout.js'
+import { fitZoom, layoutGraph, layoutLayers } from './layout.js'
 import './Architecture.css'
 
 const KINDS = {
@@ -25,6 +25,7 @@ const KINDS = {
 const kindOf = (kind) => KINDS[kind] || KINDS.other
 
 const COMPONENT_SIZE = { width: 248, height: 132 }
+const LAYER_NODE_SIZE = { width: 232, height: 124 }
 const MODULE_SIZE = { width: 220, height: 74 }
 const POLL_MS = 4000
 
@@ -41,15 +42,32 @@ const CloseIcon = () => (
   </svg>
 )
 
+// Handles on all four sides, so an arrow can leave from the side facing its target.
+const SIDES = [
+  ['l', Position.Left],
+  ['r', Position.Right],
+  ['t', Position.Top],
+  ['b', Position.Bottom],
+]
+
 const ComponentNode = ({ data, sourcePosition, targetPosition }) => {
   const c = data.component
   const kind = kindOf(c.kind)
   return (
     <div
-      className={`arch-node ${data.selected ? 'arch-node-selected' : ''} ${data.dim ? 'arch-node-dim' : ''}`}
-      style={{ '--kind': kind.color }}
+      className={`arch-node ${data.layered ? 'arch-node-layered' : ''} ${data.selected ? 'arch-node-selected' : ''} ${data.dim ? 'arch-node-dim' : ''}`}
+      style={{ '--kind': data.color || kind.color }}
     >
-      <Handle type="target" position={targetPosition} className="arch-handle" />
+      {data.layered ? (
+        SIDES.map(([id, position]) => (
+          <span key={id}>
+            <Handle id={`t-${id}`} type="target" position={position} className="arch-handle" />
+            <Handle id={`s-${id}`} type="source" position={position} className="arch-handle" />
+          </span>
+        ))
+      ) : (
+        <Handle type="target" position={targetPosition} className="arch-handle" />
+      )}
       <span className="arch-node-kind">{kind.label}</span>
       <strong className="arch-node-name">{c.name}</strong>
       <span className="arch-node-meta">
@@ -64,10 +82,17 @@ const ComponentNode = ({ data, sourcePosition, targetPosition }) => {
           ))}
         </span>
       )}
-      <Handle type="source" position={sourcePosition} className="arch-handle" />
+      {!data.layered && <Handle type="source" position={sourcePosition} className="arch-handle" />}
     </div>
   )
 }
+
+const GroupNode = ({ data }) => (
+  <div className="arch-group" style={{ '--kind': data.color }}>
+    <span className="arch-group-label">{data.label}</span>
+    <span className="arch-group-count">{data.count}</span>
+  </div>
+)
 
 const ModuleNode = ({ data, sourcePosition, targetPosition }) => {
   const m = data.module
@@ -86,7 +111,7 @@ const ModuleNode = ({ data, sourcePosition, targetPosition }) => {
   )
 }
 
-const nodeTypes = { component: ComponentNode, module: ModuleNode }
+const nodeTypes = { component: ComponentNode, module: ModuleNode, group: GroupNode }
 
 // Tests and config are real parts of a repo but not of its architecture;
 // they import nearly everything, so they're dropped from the diagram
@@ -114,6 +139,14 @@ const stripAux = (arch) => {
 
 // Nodes and edges for the chosen view, before layout.
 const rawGraph = (arch, view) => {
+  if (view === 'layers') {
+    return {
+      nodes: arch.components.map((c) => ({ id: c.id, type: 'component', data: { component: c }, ...LAYER_NODE_SIZE })),
+      edges: arch.connections.map((e) => ({ ...e, text: e.label })),
+      size: LAYER_NODE_SIZE,
+      layered: true,
+    }
+  }
   if (view === 'components') {
     return {
       nodes: arch.components.map((c) => ({ id: c.id, type: 'component', data: { component: c }, ...COMPONENT_SIZE })),
@@ -162,10 +195,24 @@ const decorate = (raw, placed, selected, focus) => {
     if (e.source === focus) neighbours.add(e.target)
     if (e.target === focus) neighbours.add(e.source)
   })
-  const nodes = placed.map((n) => ({
-    ...n,
-    data: { ...n.data, selected: n.id === selected, dim: !!focus && !neighbours.has(n.id) },
-  }))
+  const nodes = placed.map((n) =>
+    n.type === 'group' ? n : { ...n, data: { ...n.data, selected: n.id === selected, dim: !!focus && !neighbours.has(n.id) } },
+  )
+  // Layers view: leave each box from the side facing the other one.
+  const centre = new Map(
+    placed.filter((n) => n.absolute).map((n) => [n.id, { x: n.absolute.x + n.width / 2, y: n.absolute.y + n.height / 2 }]),
+  )
+  const handles = (e) => {
+    const a = centre.get(e.source)
+    const b = centre.get(e.target)
+    if (!a || !b) return {}
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    if (Math.abs(dy) >= Math.abs(dx) * 0.6) {
+      return dy >= 0 ? { sourceHandle: 's-b', targetHandle: 't-t' } : { sourceHandle: 's-t', targetHandle: 't-b' }
+    }
+    return dx >= 0 ? { sourceHandle: 's-r', targetHandle: 't-l' } : { sourceHandle: 's-l', targetHandle: 't-r' }
+  }
   const edges = raw.edges.map((e) => {
     const touches = !!focus && (e.source === focus || e.target === focus)
     const active = !focus || touches
@@ -173,6 +220,7 @@ const decorate = (raw, placed, selected, focus) => {
       id: e.id,
       source: e.source,
       target: e.target,
+      ...handles(e),
       // Short on the canvas; the full label is in the details panel.
       label: touches || e.alwaysLabelled ? (e.text.length > 34 ? `${e.text.slice(0, 33).trimEnd()}…` : e.text) : undefined,
       labelBgPadding: [6, 3],
@@ -409,7 +457,7 @@ const ArchitectureModal = ({ repo, onClose }) => {
   const queryClient = useQueryClient()
   const key = useMemo(() => ['architecture', repo.toLowerCase()], [repo])
   const url = `/api/repos/${repo}/architecture`
-  const [view, setView] = useState('components')
+  const [view, setView] = useState('layers')
   // null: pick whichever direction fits the canvas at the larger zoom.
   const [directionChoice, setDirectionChoice] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -473,6 +521,10 @@ const ArchitectureModal = ({ repo, onClose }) => {
   const layouts = useMemo(() => {
     if (!raw) return null
     const options = { nodeWidth: raw.size.width, nodeHeight: raw.size.height }
+    if (raw.layered) {
+      const placed = layoutLayers(raw.nodes, options)
+      return { LR: placed, TB: placed }
+    }
     const edges = layoutEdges(raw)
     return {
       LR: layoutGraph(raw.nodes, edges, { ...options, direction: 'LR' }),
@@ -496,14 +548,14 @@ const ArchitectureModal = ({ repo, onClose }) => {
   }
   // From the overview or a connection link.
   const selectComponent = (id) => {
-    setView('components')
+    setView((v) => (v === 'modules' ? 'layers' : v))
     setSelected(id)
   }
 
   const running = data?.status === 'running' || analyze.isPending
   const failed = data?.status === 'failed'
   const treeUrl = arch ? `https://github.com/${arch.repository}/tree/${arch.branch}` : ''
-  const selectedComponent = view === 'components' && arch?.components.find((c) => c.id === selected)
+  const selectedComponent = view !== 'modules' && arch?.components.find((c) => c.id === selected)
   const selectedModule = view === 'modules' && arch?.modules.nodes.find((m) => m.id === selected)
 
   let body
@@ -576,7 +628,9 @@ const ArchitectureModal = ({ repo, onClose }) => {
               pannable
               zoomable
               style={{ width: 168, height: 112 }}
-              nodeColor={(n) => (n.type === 'module' ? n.data.color : kindOf(n.data.component?.kind).color)}
+              nodeColor={(n) =>
+                n.type === 'group' ? 'transparent' : n.data.color || kindOf(n.data.component?.kind).color
+              }
               nodeStrokeWidth={0}
               maskColor="rgba(2, 4, 3, 0.72)"
             />
@@ -613,6 +667,9 @@ const ArchitectureModal = ({ repo, onClose }) => {
             {arch && (
               <>
                 <div className="arch-tabs" role="tablist" aria-label="View">
+                  <button type="button" role="tab" aria-selected={view === 'layers'} onClick={() => switchView('layers')}>
+                    Layers
+                  </button>
                   <button type="button" role="tab" aria-selected={view === 'components'} onClick={() => switchView('components')}>
                     Components
                   </button>
@@ -620,6 +677,7 @@ const ArchitectureModal = ({ repo, onClose }) => {
                     Modules
                   </button>
                 </div>
+                {view !== 'layers' && (
                 <div className="arch-tabs" role="group" aria-label="Layout direction">
                   <button
                     type="button"
@@ -638,6 +696,7 @@ const ArchitectureModal = ({ repo, onClose }) => {
                     Vertical
                   </button>
                 </div>
+                )}
                 <button
                   type="button"
                   className="arch-pill"

@@ -47,6 +47,8 @@ COMPONENT_KINDS = [
     "frontend", "backend", "service", "worker", "agent", "data", "storage", "external", "infra",
     "library", "other",
 ]
+# The layer a component is drawn in: the diagram groups components into boxes.
+COMPONENT_GROUPS = ["frontend", "backend", "ai", "data", "external"]
 CONNECTION_KINDS = ["calls", "http", "imports", "reads", "writes", "renders", "events", "deploys", "auth"]
 
 ARCH_PROMPT = (
@@ -64,6 +66,11 @@ ARCH_PROMPT = (
     "- paths: the directories or files, written exactly as they appear in the input, that make up "
     "each component; empty for external systems and data stores outside the repository. Every "
     "source directory should belong to some component.\n"
+    "- group: the layer the component is drawn in. 'frontend': UI apps and clients. 'backend': "
+    "the repository's own servers, services, agents, workers, and libraries. 'ai': hosted AI or "
+    "LLM model providers and model APIs (OpenAI, Groq, Gemini, OpenRouter, embeddings, speech). "
+    "'data': databases, vector stores, caches, object storage. 'external': every other "
+    "third-party service (auth, payments, search, email, GitHub).\n"
     "- id: a short, unique, lowercase slug (letters, digits, hyphens).\n"
     "- name: short, at most 3 words (e.g. 'Agent core', 'Tool registry', 'Supabase'); put the "
     "detail in description.\n"
@@ -100,12 +107,13 @@ ARCH_SCHEMA = {
                     "id": {"type": "string"},
                     "name": {"type": "string"},
                     "kind": {"type": "string", "enum": COMPONENT_KINDS},
+                    "group": {"type": "string", "enum": COMPONENT_GROUPS},
                     "description": {"type": "string"},
                     "responsibilities": {"type": "array", "items": {"type": "string"}},
                     "paths": {"type": "array", "items": {"type": "string"}},
                     "tech": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["id", "name", "kind", "description", "responsibilities", "paths", "tech"],
+                "required": ["id", "name", "kind", "group", "description", "responsibilities", "paths", "tech"],
             },
         },
         "connections": {
@@ -419,6 +427,7 @@ def _build_architecture(raw, outline, edges, modules, module_edges, external):
                 "source_id": str(c.get("id") or ""),
                 "name": str(c["name"]).strip()[:60],
                 "kind": c.get("kind") if c.get("kind") in COMPONENT_KINDS else "other",
+                "group": c.get("group") if c.get("group") in COMPONENT_GROUPS else None,
                 "description": str(c.get("description") or "").strip()[:400],
                 "responsibilities": _clean_list(c.get("responsibilities"), 6),
                 "paths": paths,

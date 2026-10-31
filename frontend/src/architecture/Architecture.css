@@ -623,3 +623,41 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* --- layers view ------------------------------------------------------------- */
+
+.arch-node-layered {
+  width: 232px;
+  height: 124px;
+}
+
+.arch-group {
+  --kind: var(--color-green);
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 1.5px dashed color-mix(in srgb, var(--kind) 55%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--kind) 6%, transparent);
+  pointer-events: none;
+}
+
+.arch-group-label {
+  position: absolute;
+  top: 12px;
+  left: 20px;
+  font-family: var(--font-display, inherit);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--kind);
+}
+
+.arch-group-count {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--kind) 70%, white);
+  opacity: 0.8;
+}
