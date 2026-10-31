@@ -541,3 +541,12 @@ if SERVE_FRONTEND:
         if path and candidate.is_file() and FRONTEND_DIST.resolve() in candidate.parents:
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # PORT is set by hosts like Render; reload only for local development.
+    port = int(os.getenv("PORT", "8000"))
+    local = "PORT" not in os.environ
+    uvicorn.run("main:app", host="127.0.0.1" if local else "0.0.0.0", port=port, reload=local)

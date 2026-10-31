@@ -54,7 +54,7 @@ Sign in with GitHub, pick a repository, and ask about its code, history, issues,
 
 | Agent | Role |
 |---|---|
-| **Orchestrator** | Works out the goal and picks the route. It never touches GitHub itself. Its routing decisions come from [Wity](https://wity.alphanimble.com/docs) when a key is set, otherwise from the main model. |
+| **Orchestrator** | Works out the goal and picks the route. It never touches GitHub itself. |
 | **Planning agent** | Owns multi-step runs. Every step has an expected outcome; if the result differs, it revises the plan. |
 | **Reader** | Read-only investigation with 40 tools: repository index, file outlines, single functions, commits, diffs, issues, pull requests, and memory. It never sees a write tool. |
 | **Writer** | Proposes exactly one change using 19 write tools. The proposal is validated before you see it. |
@@ -103,7 +103,7 @@ Open `http://localhost:5173/app` for the chat. The full list of environment vari
 
 ## Tech stack
 
-- **Backend:** FastAPI, Postgres on Supabase (`psycopg`), OpenRouter with `qwen/qwen3.7-flash` (Gemini as an alternative provider), [Wity](https://wity.alphanimble.com/docs) for routing decisions, `cryptography` (Fernet) for encrypting GitHub tokens, and `sqlglot` for validating memory queries.
+- **Backend:** FastAPI, Postgres on Supabase (`psycopg`), OpenRouter with `qwen/qwen3.7-flash` (Gemini as an alternative provider), `cryptography` (Fernet) for encrypting GitHub tokens, and `sqlglot` for validating memory queries.
 - **Frontend:** React 19, Vite, Three.js for the landing page, React Flow with dagre for the architecture diagram.
 
 ## Security

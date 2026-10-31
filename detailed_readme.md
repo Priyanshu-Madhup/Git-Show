@@ -29,7 +29,6 @@ It has two parts:
    - **read-only** requests (questions, lookups, explaining code) go to the **Reader** in one step;
    - **one change** that doesn't depend on reading files first (create a branch, open an issue) goes to the **Writer** in one step;
    - anything bigger goes to the **Planning agent**.
-   The routing decisions (does it change GitHub? one step or a plan? is it about the whole codebase?) are made by [Wity](backend/wity.py), a decision API, when `WITY_API_KEY` is set; the main model then only writes the goal and instruction when a change or codebase read needs them. Without a key, or if Wity errors, the main model decides everything.
    It never touches GitHub itself. If the Reader discovers a request needs a change after all, it hands it back and the orchestrator passes it to the planner.
 2. **Planning agent** ([agents/planner.py](backend/agents/planner.py)) — owns multi-step runs. It writes a plan in which every step has an *expected* outcome, sends each step to the Reader or Writer, and gets every output back. If an output is what the step expected, the plan continues; if not, the planner revises the plan and carries on with the new one.
 3. **Reader** ([agents/reader.py](backend/agents/reader.py)) — read-only investigation with 40 read tools: the repository index, file outlines, single functions, line ranges, commits, diffs, issues, pull requests, and the user's saved history (memory). It never sees a write tool.
@@ -183,7 +182,6 @@ uvicorn main:app --reload --port 8000
 | `OPENROUTER_MODEL` | no | Model id (default `qwen/qwen3.7-flash`) |
 | `GEMINI_API_KEY` | yes (if using Gemini) | Gemini API key |
 | `GEMINI_MODEL` | no | Model id (default `gemini-flash-lite-latest`) |
-| `WITY_API_KEY` | no | [Wity](https://wity.alphanimble.com/docs) key; when set, the orchestrator's routing decisions come from Wity instead of the main model (falls back to the main model on any error) |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | yes | GitHub App's client credentials |
 | `GITHUB_CALLBACK_URL` | yes | Must match a callback URL registered on the App |
 | `FRONTEND_URL` | yes | Where users land after sign-in (they're sent to `FRONTEND_URL/app`) |

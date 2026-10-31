@@ -122,7 +122,14 @@ def who_message(ctx):
                 f"The signed-in GitHub user is {login}. Their GitHub profile README (the page shown "
                 f"on github.com/{login}) is README.md in the repository {login}/{login}. Requests "
                 "about 'my profile', 'my profile README', or 'my GitHub page' mean that file, not "
-                "the selected repository."
+                "the selected repository. Use that meaning ONLY when the message actually says "
+                "profile, profile README or GitHub page. "
+                + (
+                    f"Otherwise 'this', 'this project', 'this repo' and 'the code' mean the selected "
+                    f"repository {ctx.repo}."
+                    if ctx.repo
+                    else ""
+                )
             ),
         }
     ]
