@@ -37,6 +37,10 @@ It has two parts:
 
 Progress streams to the browser as it happens (agent hand-offs, tool calls, plan revisions), so the chat shows a live timeline of which agent is doing what.
 
+### Linking other repositories
+
+Paste a GitHub URL (a repository, or a file, directory, issue or pull request in it) into the chat and the agents can read it even though it isn't the selected repository: the Reader gets its `owner/repo` for every read tool, and "go through this project" with a link builds the codebase outline from the linked repository. A follow-up that doesn't repeat the link keeps using the most recently linked one. Linked repositories are read-only: the Writer refuses to propose changes to them. Private repositories the signed-in account can't see come back as not found.
+
 ### Guardrails
 
 - **Nothing changes without your confirmation**, and destructive actions (deleting a file or branch, merging) get a red warning card.

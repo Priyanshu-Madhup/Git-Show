@@ -193,6 +193,8 @@ def _off_target_repo(ctx, arguments):
     allowed if the user named that repository themselves. Returns an error
     for the model, or None."""
     owner, repo = arguments.get("owner"), arguments.get("repo")
+    if owner and repo and f"{owner}/{repo}".lower() in (r.lower() for r in ctx.linked_repos):
+        return f"{owner}/{repo} was only linked to be read; never change it. Make no change there."
     if not ctx.repo or not owner or not repo:
         return None
     target = f"{owner}/{repo}".lower()
